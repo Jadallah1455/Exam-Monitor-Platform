@@ -126,6 +126,27 @@ foreach ($rs as $r) {
 }
 $rs->close();
 
+// 6. Student Enrollments
+$rs2 = $DB->get_recordset_sql(
+    "SELECT DISTINCT ra.userid, c.instanceid AS courseid, u.firstname, u.lastname
+       FROM {role_assignments} ra
+       JOIN {context} c ON c.id = ra.contextid
+       JOIN {role} r ON r.id = ra.roleid
+       JOIN {user} u ON u.id = ra.userid
+      WHERE c.contextlevel = " . CONTEXT_COURSE . "
+        AND r.archetype = 'student' AND u.deleted = 0
+      ORDER BY c.instanceid, ra.userid"
+);
+$student_enrollments = [];
+foreach ($rs2 as $r) {
+    $student_enrollments[] = [
+        'course_id' => (int)$r->courseid,
+        'student_id' => (int)$r->userid,
+        'student_name' => trim((string)$r->firstname . ' ' . (string)$r->lastname),
+    ];
+}
+$rs2->close();
+
 // Push to backend
 $url = rtrim($server, '/') . '/api/sync/bulk';
 $payload = json_encode([
@@ -136,6 +157,7 @@ $payload = json_encode([
     'students' => $students,
     'quizzes' => $quizzes,
     'enrollments' => $enrollments,
+    'student_enrollments' => $student_enrollments,
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
 $ch = curl_init($url);
