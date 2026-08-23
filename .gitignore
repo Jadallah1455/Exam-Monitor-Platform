@@ -1,0 +1,9 @@
+# Moodle plugin standard ignores
+*.zip
+*.tar.gz
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
