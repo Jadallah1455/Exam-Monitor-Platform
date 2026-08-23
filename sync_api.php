@@ -126,16 +126,14 @@ foreach ($rs as $r) {
 }
 $rs->close();
 
-// 6. Student Enrollments
+// 6. Student Enrollments (Using user_enrolments for reliability)
 $rs2 = $DB->get_recordset_sql(
-    "SELECT DISTINCT ra.userid, c.instanceid AS courseid, u.firstname, u.lastname
-       FROM {role_assignments} ra
-       JOIN {context} c ON c.id = ra.contextid
-       JOIN {role} r ON r.id = ra.roleid
-       JOIN {user} u ON u.id = ra.userid
-      WHERE c.contextlevel = " . CONTEXT_COURSE . "
-        AND r.archetype = 'student' AND u.deleted = 0
-      ORDER BY c.instanceid, ra.userid"
+    "SELECT DISTINCT ue.userid, e.courseid, u.firstname, u.lastname
+       FROM {user_enrolments} ue
+       JOIN {enrol} e ON e.id = ue.enrolid
+       JOIN {user} u ON u.id = ue.userid
+      WHERE u.deleted = 0 AND ue.status = 0 AND e.status = 0
+      ORDER BY e.courseid, ue.userid"
 );
 $student_enrollments = [];
 foreach ($rs2 as $r) {
