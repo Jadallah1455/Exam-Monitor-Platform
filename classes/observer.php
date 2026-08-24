@@ -90,6 +90,33 @@ class observer
         ]);
     }
 
+    public static function user_enrolment_deleted(\core\event\user_enrolment_deleted $event): void
+    {
+        self::push('user_enrolment_deleted', [
+            'userid' => (int)$event->relateduserid,
+            'courseid' => (int)$event->courseid,
+        ]);
+    }
+
+    public static function user_deleted(\core\event\user_deleted $event): void
+    {
+        self::push('user_deleted', [
+            'userid' => (int)$event->objectid,
+        ]);
+    }
+
+    public static function role_unassigned(\core\event\role_unassigned $event): void
+    {
+        if ($event->contextlevel != CONTEXT_COURSE) {
+            return;
+        }
+
+        self::push('role_unassigned', [
+            'userid' => (int)$event->relateduserid,
+            'courseid' => (int)$event->courseid,
+        ]);
+    }
+
     // ---------------------------------------------------------------
 
     private static function push(string $type, array $data): void

@@ -28,4 +28,19 @@ $observers = [
         'callback'    => '\quizaccess_exammonitor\observer::role_assigned',
         'includefile' => '/mod/quiz/accessrule/exammonitor/classes/observer.php',
     ],
+    [
+        'eventname'   => '\core\event\user_enrolment_deleted',
+        'callback'    => '\quizaccess_exammonitor\observer::user_enrolment_deleted',
+        'includefile' => '/mod/quiz/accessrule/exammonitor/classes/observer.php',
+    ],
+    [
+        'eventname'   => '\core\event\user_deleted',
+        'callback'    => '\quizaccess_exammonitor\observer::user_deleted',
+        'includefile' => '/mod/quiz/accessrule/exammonitor/classes/observer.php',
+    ],
+    [
+        'eventname'   => '\core\event\role_unassigned',
+        'callback'    => '\quizaccess_exammonitor\observer::role_unassigned',
+        'includefile' => '/mod/quiz/accessrule/exammonitor/classes/observer.php',
+    ],
 ];
