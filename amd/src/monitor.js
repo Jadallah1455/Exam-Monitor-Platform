@@ -257,7 +257,7 @@ define([], function () {
   }
 
   function logEvent(eventData) {
-    if (debugMode) console.log('[ExamMonitor Event]', eventData);
+    console.log('📡 [ExamMonitor Event]', eventData.event_type, eventData);
   }
 
   function debounce(func, wait) {
@@ -730,6 +730,12 @@ define([], function () {
       serverUrl = (moodleContext.settings && moodleContext.settings.server_url) || '';
       pluginSecret = (moodleContext.settings && moodleContext.settings.sync_secret) || '';
       sessionId = getSessionId();
+
+      console.log('🚀 [ExamMonitor Initialized]', {
+        student: moodleContext.student,
+        quiz: moodleContext.quiz,
+        server: serverUrl
+      });
 
       if (moodleContext.settings && moodleContext.settings.enforce) {
         enforce = {
