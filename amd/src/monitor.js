@@ -23,7 +23,7 @@ define([], function () {
     return id;
   }
 
-  const sessionId = getSessionId();
+  let sessionId = '';
   const pageLoadedAt = Date.now();
   const debugMode = false;
 
@@ -113,7 +113,7 @@ define([], function () {
         visibility: document.visibilityState,
         device_telemetry: telemetry,
       });
-    }, 30000);
+    }, 10000);
   }
 
   // =====================================================
@@ -300,26 +300,20 @@ define([], function () {
     try {
       var payload = JSON.stringify({ events: events });
 
-      if (supportsCompression && payload.length > 1024) {
-        var compressed = await compressPayload(payload);
-        if (compressed && compressed.byteLength < payload.length * 0.8) {
-          var blob = new Blob([compressed], { type: 'application/octet-stream' });
-          var formData = new FormData();
-          formData.append('data', blob, 'events.gz');
-          formData.append('compressed', 'gzip');
-          if (navigator.sendBeacon) { navigator.sendBeacon(serverUrl, formData); resetRetryDelay(); return; }
-          await fetch(serverUrl, { method: 'POST', body: formData, keepalive: true });
-          resetRetryDelay();
-          return;
-        }
+      var response = await fetch(serverUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Exam-Monitor-Secret': pluginSecret || ''
+        },
+        body: payload,
+        keepalive: true
+      });
+
+      if (!response.ok && response.status !== 204) {
+        throw new Error('HTTP ' + response.status);
       }
 
-      if (navigator.sendBeacon) {
-        var beaconBlob = new Blob([payload], { type: 'application/json' });
-        if (navigator.sendBeacon(serverUrl, beaconBlob)) { resetRetryDelay(); return; }
-      }
-
-      await fetch(serverUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
       resetRetryDelay();
     } catch (e) {
       var localQueue = getLocalQueue();
@@ -346,22 +340,13 @@ define([], function () {
 
   function startBatchTimer() {
     if (batchTimer) return;
-    batchTimer = setInterval(function () { flushBatch(); retryLocalQueue(); }, BATCH_INTERVAL_MS);
+    batchTimer = setInterval(function () { flushBatch(); retryLocalQueue(); }, 1000);
   }
-
-  var IMMEDIATE_EVENTS = [
-    'copy', 'paste', 'tab_hidden', 'tab_switch', 'window_blur',
-    'devtools_shortcut', 'fullscreen_exit', 'answer_changed',
-    'print_attempt', 'paste_from_menu', 'right_click',
-    'ip_snapshot', 'ip_change'
-  ];
 
   function sendToServer(eventData) {
     if (!serverUrl) return;
     eventQueue.push(eventData);
-    if (IMMEDIATE_EVENTS.indexOf(eventData.event_type) !== -1 || eventQueue.length >= BATCH_SIZE) {
-      flushBatch();
-    }
+    flushBatch();
   }
 
   function handleEvent(eventType, metadata) {
@@ -744,6 +729,7 @@ define([], function () {
       moodleContext = config || {};
       serverUrl = (moodleContext.settings && moodleContext.settings.server_url) || '';
       pluginSecret = (moodleContext.settings && moodleContext.settings.sync_secret) || '';
+      sessionId = getSessionId();
 
       if (moodleContext.settings && moodleContext.settings.enforce) {
         enforce = {
@@ -771,6 +757,13 @@ define([], function () {
 
       // Request fullscreen on start if enforced
       requestFullscreen();
+
+      // Send initial page_view event immediately so student appears in dashboard in real-time
+      handleEvent('page_view', {
+        page_url: window.location.href,
+        device_telemetry: getDeviceTelemetry(),
+        network_info: getNetworkInfo(),
+      });
 
       // Retry queued events from previous sessions
       retryLocalQueue();
