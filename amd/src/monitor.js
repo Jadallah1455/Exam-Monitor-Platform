@@ -282,7 +282,7 @@ define([], function () {
   var serverUrl = '';
   var eventQueue = [];
   var BATCH_SIZE = 50;
-  var BATCH_INTERVAL_MS = 10000;
+  var BATCH_INTERVAL_MS = 3000;
   var batchTimer = null;
   var QUEUE_KEY = 'em_event_queue';
   var MAX_QUEUE_SIZE = 500;
@@ -349,10 +349,19 @@ define([], function () {
     batchTimer = setInterval(function () { flushBatch(); retryLocalQueue(); }, BATCH_INTERVAL_MS);
   }
 
+  var IMMEDIATE_EVENTS = [
+    'copy', 'paste', 'tab_hidden', 'tab_switch', 'window_blur',
+    'devtools_shortcut', 'fullscreen_exit', 'answer_changed',
+    'print_attempt', 'paste_from_menu', 'right_click',
+    'ip_snapshot', 'ip_change'
+  ];
+
   function sendToServer(eventData) {
     if (!serverUrl) return;
     eventQueue.push(eventData);
-    if (eventQueue.length >= BATCH_SIZE) flushBatch();
+    if (IMMEDIATE_EVENTS.indexOf(eventData.event_type) !== -1 || eventQueue.length >= BATCH_SIZE) {
+      flushBatch();
+    }
   }
 
   function handleEvent(eventType, metadata) {
@@ -608,7 +617,7 @@ define([], function () {
   // =====================================================
   // Teacher real-time actions polling
   // =====================================================
-  var ACTION_POLL_INTERVAL_MS = 5000;
+  var ACTION_POLL_INTERVAL_MS = 3000;
   var actionPollTimer = null;
   var pluginSecret = '';
 
