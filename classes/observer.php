@@ -24,16 +24,18 @@ class observer
 
     public static function course_module_created(\core\event\course_module_created $event): void
     {
+        global $DB;
+
         // Only care about quiz modules.
         $other = $event->other;
         if (($other['modulename'] ?? '') !== 'quiz') {
             return;
         }
-        $cm = get_coursemodule_from_id('quiz', $event->objectid, 0, false, MUST_EXIST);
+        $cm = get_coursemodule_from_id('quiz', $event->objectid, 0, false, IGNORE_MISSING);
         if (!$cm) {
             return;
         }
-        $quiz = get_coursemodule_instance('quiz', $event->objectid, 0);
+        $quiz = $DB->get_record('quiz', ['id' => $cm->instance]);
         if (!$quiz) {
             return;
         }
