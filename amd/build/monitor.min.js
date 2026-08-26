@@ -648,11 +648,18 @@ define([], function () {
   }
 
   // =====================================================
-  // Teacher real-time actions polling
+  // Teacher real-time actions polling & persistent enforcement
   // =====================================================
   var ACTION_POLL_INTERVAL_MS = 3000;
   var actionPollTimer = null;
+  var timerManagerInterval = null;
   var pluginSecret = '';
+
+  function getQuizStorageKey(prefix) {
+    var qid = (moodleContext.quiz && moodleContext.quiz.id) || '0';
+    var uid = (moodleContext.student && moodleContext.student.id) || '0';
+    return prefix + '_q' + qid + '_u' + uid;
+  }
 
   function showMessageOverlay(message) {
     try {
@@ -660,12 +667,12 @@ define([], function () {
       if (existing) existing.remove();
       var overlay = document.createElement('div');
       overlay.id = 'exammonitor-teacher-msg';
-      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
-      overlay.innerHTML = '<div style="background:#fff;border-radius:16px;padding:32px 40px;max-width:480px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.4);">' +
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);';
+      overlay.innerHTML = '<div style="background:#fff;border-radius:20px;padding:32px 40px;max-width:480px;text-align:center;box-shadow:0 25px 70px rgba(0,0,0,0.5);border:1px solid #e2e8f0;">' +
         '<div style="font-size:48px;margin-bottom:12px;">💬</div>' +
-        '<h2 style="font-size:18px;font-weight:800;color:#1e293b;margin:0 0 8px;">رسالة من المدرّس</h2>' +
-        '<p style="font-size:16px;color:#475569;line-height:1.6;margin:0 0 20px;white-space:pre-wrap;">' + message.replace(/</g, '&lt;') + '</p>' +
-        '<button onclick="this.closest(\'#exammonitor-teacher-msg\').remove()" style="background:#2563eb;color:#fff;border:none;padding:12px 32px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;">حسناً، أفهم</button>' +
+        '<h2 style="font-size:20px;font-weight:800;color:#0f172a;margin:0 0 10px;">رسالة تنبيهية من المدرّس</h2>' +
+        '<p style="font-size:16px;color:#334155;line-height:1.7;margin:0 0 24px;white-space:pre-wrap;font-weight:600;">' + message.replace(/</g, '&lt;') + '</p>' +
+        '<button onclick="this.closest(\'#exammonitor-teacher-msg\').remove()" style="background:#2563eb;color:#fff;border:none;padding:12px 36px;border-radius:12px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(37,99,235,0.3);">حسناً، فهمت</button>' +
         '</div>';
       document.body.appendChild(overlay);
     } catch (e) {}
@@ -673,52 +680,120 @@ define([], function () {
 
   function showLockOverlay() {
     try {
+      var lockKey = getQuizStorageKey('exammonitor_locked');
+      localStorage.setItem(lockKey, '1');
+      sessionStorage.setItem(lockKey, '1');
+
       var existing = document.getElementById('exammonitor-locked');
-      if (existing) existing.remove();
-      var overlay = document.createElement('div');
-      overlay.id = 'exammonitor-locked';
-      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999999;background:#7f1d1d;display:flex;align-items:center;justify-content:center;';
-      overlay.innerHTML = '<div style="text-align:center;color:#fff;padding:40px;">' +
-        '<div style="font-size:64px;margin-bottom:16px;">🔒</div>' +
-        '<h1 style="font-size:24px;font-weight:800;margin:0 0 12px;">تم قفل الامتحان</h1>' +
-        '<p style="font-size:16px;opacity:0.8;margin:0;">تم إغلاق هذا الامتحان من قبل المدرّس. لا يمكنك إعادة فتحه.</p>' +
-        '</div>';
-      document.body.appendChild(overlay);
-      // Disable all quiz interactions
-      document.querySelectorAll('input, textarea, select, button[type="submit"]').forEach(function(el) {
+      if (!existing) {
+        var overlay = document.createElement('div');
+        overlay.id = 'exammonitor-locked';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:#7f1d1d;display:flex;align-items:center;justify-content:center;user-select:none;pointer-events:all;';
+        overlay.innerHTML = '<div style="text-align:center;color:#fff;padding:40px;max-width:550px;">' +
+          '<div style="font-size:72px;margin-bottom:20px;">🔒</div>' +
+          '<h1 style="font-size:28px;font-weight:900;margin:0 0 16px;letter-spacing:-0.5px;">تم قفل الامتحان من قِبل المدرّس</h1>' +
+          '<p style="font-size:17px;line-height:1.7;opacity:0.9;margin:0 0 20px;font-weight:600;">تم إنهاء وإغلاق محاولتك في هذا الامتحان بقرار مباشر من مدرّس المساق.<br>لا يمكنك تعديل أي إجابة أو استكمال الامتحان.</p>' +
+          '<div style="display:inline-block;background:rgba(0,0,0,0.3);padding:10px 24px;border-radius:30px;font-size:13px;font-weight:700;">حالة المحاولة: مقفلة نهائياً</div>' +
+          '</div>';
+        document.body.appendChild(overlay);
+      }
+
+      // Disable all inputs, forms, and buttons completely
+      document.querySelectorAll('input, textarea, select, button, a').forEach(function(el) {
         el.disabled = true;
         el.style.pointerEvents = 'none';
+        el.tabIndex = -1;
       });
+
+      // Intercept any clicks and keyboard events
+      window.addEventListener('keydown', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
+      window.addEventListener('keyup', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
+      window.addEventListener('keypress', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
+      window.addEventListener('contextmenu', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
+
+      // Auto-submit responseform to permanently finish the attempt on Moodle if not submitted
+      try {
+        var respForm = document.getElementById('responseform') || document.querySelector('form.quiz-form') || document.querySelector('form[action*="attempt.php"]');
+        if (respForm && !respForm.dataset.emAutoFinished) {
+          respForm.dataset.emAutoFinished = 'true';
+          respForm.submit();
+        }
+      } catch (e) {}
     } catch (e) {}
   }
 
   function reduceTime(minutes) {
     try {
-      var timerEl = document.getElementById('timerobject') || document.querySelector('.timer') || document.querySelector('[data-timer]');
-      if (!timerEl) {
-        showToast('تم تقليص الوقت بـ ' + minutes + ' دقائق');
-        return;
-      }
-      // Try to reduce the visible timer
-      var currentText = timerEl.textContent || timerEl.innerText || '';
-      var match = currentText.match(/(\d+):(\d+)/);
-      if (match) {
-        var totalSec = parseInt(match[1]) * 60 + parseInt(match[2]) - minutes * 60;
-        if (totalSec < 0) totalSec = 0;
-        var newMin = Math.floor(totalSec / 60);
-        var newSec = totalSec % 60;
-        timerEl.textContent = newMin + ':' + (newSec < 10 ? '0' : '') + newSec;
-        // Also try to trigger Moodle's timer reduction if available
-        if (typeof M.mod_quiz !== 'undefined' && M.mod_quiz.timer) {
-          M.mod_quiz.timer.pause();
-          M.mod_quiz.timer.seconds = totalSec;
-          M.mod_quiz.timer.resume();
-        }
-      }
-      showToast('⚠ تم تقليص الوقت بـ ' + minutes + ' دقائق');
+      var min = parseInt(minutes, 10) || 5;
+      var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
+      var curReducedSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+      curReducedSec += min * 60;
+      localStorage.setItem(timerKey, curReducedSec);
+      sessionStorage.setItem(timerKey, curReducedSec);
+
+      showToast('⚠ تم تقليص وقت الامتحان بـ ' + min + ' دقائق من قِبل المدرّس');
+      applyReducedTime();
     } catch (e) {
       showToast('تم تقليص الوقت بـ ' + minutes + ' دقائق');
     }
+  }
+
+  function applyReducedTime() {
+    try {
+      var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
+      var totalReducedSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+      if (totalReducedSec <= 0) return;
+
+      // 1. If Moodle YUI / JS timer object exists, modify it
+      if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer) {
+        if (typeof M.mod_quiz.timer.seconds === 'number') {
+          if (!M.mod_quiz.timer._emAdjusted) {
+            M.mod_quiz.timer._emAdjusted = totalReducedSec;
+            M.mod_quiz.timer.seconds = Math.max(0, M.mod_quiz.timer.seconds - totalReducedSec);
+          }
+        }
+      }
+
+      // 2. Intercept visible timer DOM elements
+      var timerEls = document.querySelectorAll('#quiz-timer, #timerobject, .mod_quiz-timer, #quiz-time-left, [data-timer]');
+      timerEls.forEach(function(el) {
+        var text = el.innerText || el.textContent || '';
+        var match = text.match(/(\d+):(\d+)(?::(\d+))?/);
+        if (match) {
+          var h = 0, m = 0, s = 0;
+          if (match[3] !== undefined) {
+            h = parseInt(match[1], 10);
+            m = parseInt(match[2], 10);
+            s = parseInt(match[3], 10);
+          } else {
+            m = parseInt(match[1], 10);
+            s = parseInt(match[2], 10);
+          }
+          var currentRemaining = h * 3600 + m * 60 + s;
+          if (!el.dataset.emRawTime) {
+            el.dataset.emRawTime = currentRemaining;
+          }
+          var adjusted = parseInt(el.dataset.emRawTime, 10) - totalReducedSec;
+          if (adjusted <= 0) {
+            el.textContent = '00:00 (انتهى الوقت)';
+            showLockOverlay();
+          } else {
+            var newH = Math.floor(adjusted / 3600);
+            var newM = Math.floor((adjusted % 3600) / 60);
+            var newS = adjusted % 60;
+            var formatted = (newH > 0 ? (newH + ':') : '') +
+              (newM < 10 ? '0' : '') + newM + ':' +
+              (newS < 10 ? '0' : '') + newS;
+            el.textContent = (text.indexOf('الوقت') !== -1 ? 'الوقت المتبقي: ' : (text.indexOf('Time') !== -1 ? 'Time left: ' : '')) + formatted;
+          }
+        }
+      });
+    } catch (e) {}
+  }
+
+  function startTimerManager() {
+    if (timerManagerInterval) return;
+    timerManagerInterval = setInterval(applyReducedTime, 500);
   }
 
   function acknowledgeAction(actionId) {
@@ -739,10 +814,33 @@ define([], function () {
       fetch(checkUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: pluginSecret, session_id: sessionId }),
+        body: JSON.stringify({
+          secret: pluginSecret,
+          session_id: sessionId,
+          student_id: moodleContext.student ? moodleContext.student.id : 0,
+          exam_id: moodleContext.quiz ? moodleContext.quiz.id : 0,
+        }),
       })
       .then(function(res) { return res.json(); })
       .then(function(data) {
+        if (!data) return;
+
+        // Permanent lock check from server
+        if (data.is_locked) {
+          showLockOverlay();
+        }
+
+        // Cumulative reduced minutes from server
+        if (data.total_reduced_minutes && data.total_reduced_minutes > 0) {
+          var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
+          var targetSec = data.total_reduced_minutes * 60;
+          if (parseInt(localStorage.getItem(timerKey) || '0', 10) < targetSec) {
+            localStorage.setItem(timerKey, targetSec);
+            sessionStorage.setItem(timerKey, targetSec);
+            applyReducedTime();
+          }
+        }
+
         var actions = data.actions || [];
         actions.forEach(function(action) {
           if (action.action === 'send_message') {
@@ -766,6 +864,7 @@ define([], function () {
 
   function startActionPolling() {
     if (actionPollTimer) return;
+    pollTeacherActions();
     actionPollTimer = setInterval(pollTeacherActions, ACTION_POLL_INTERVAL_MS);
   }
 
@@ -784,6 +883,12 @@ define([], function () {
         quiz: moodleContext.quiz,
         server: serverUrl
       });
+
+      // Immediate check for persistent lock
+      var lockKey = getQuizStorageKey('exammonitor_locked');
+      if (localStorage.getItem(lockKey) === '1' || sessionStorage.getItem(lockKey) === '1') {
+        showLockOverlay();
+      }
 
       if (moodleContext.settings && moodleContext.settings.enforce) {
         enforce = {
@@ -807,6 +912,7 @@ define([], function () {
       startHeartbeat();
       startIdleDetection();
       startSummaryFlush();
+      startTimerManager();
       startActionPolling();
 
       // Request fullscreen on start if enforced
