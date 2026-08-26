@@ -190,14 +190,8 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
             return;
         }
 
-        // Derive the course teachers from Moodle role assignments
-        // (archetype teacher/editingteacher in the course context).
-        $userfields = class_exists('\core_user\fields')
-            ? \core_user\fields::for_name()->get_sql('u')->selects
-            : 'u.firstname, u.lastname';
-
         $teacherusers = $DB->get_records_sql(
-            "SELECT DISTINCT u.id, u.username, u.email, $userfields
+            "SELECT DISTINCT u.*
                FROM {role_assignments} ra
                JOIN {context} c ON c.id = ra.contextid
                JOIN {role} r ON r.id = ra.roleid

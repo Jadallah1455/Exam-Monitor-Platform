@@ -3,7 +3,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'quizaccess_exammonitor';
-$plugin->version = 2026082600;
+$plugin->version = 2026082601;
 $plugin->requires = 2022041900;
 $plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.5.3';
+$plugin->release = '0.5.4';
