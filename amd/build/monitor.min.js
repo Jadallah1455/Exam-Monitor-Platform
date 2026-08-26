@@ -252,7 +252,10 @@ define([], function () {
         platform: navigator.platform,
       },
       network: getNetworkInfo(),
-      metadata: metadata || {},
+      metadata: {
+        device_telemetry: getDeviceTelemetry(),
+        ...(metadata || {})
+      },
     };
   }
 
@@ -393,10 +396,33 @@ define([], function () {
     var tag = element.tagName.toLowerCase();
     var type = element.type || tag;
     var vi = {};
-    if (type === 'password') { vi = { has_value: Boolean(element.value), value_length: element.value.length }; }
-    else if (tag === 'textarea' || type === 'text') { var tv = element.value || ''; vi = { has_value: tv.length > 0, value_length: tv.length, word_count: tv.trim() ? tv.trim().split(/\s+/).length : 0 }; }
-    else if (type === 'radio' || type === 'checkbox') { vi = { checked: element.checked, answer_value: element.value }; }
-    else { vi = { has_value: Boolean(element.value), answer_value: element.value }; }
+    if (type === 'password') {
+      vi = { has_value: Boolean(element.value), value_length: element.value.length };
+    } else if (tag === 'textarea' || type === 'text') {
+      var tv = element.value || '';
+      vi = {
+        has_value: tv.length > 0,
+        value_length: tv.length,
+        word_count: tv.trim() ? tv.trim().split(/\s+/).length : 0,
+        answer_text: tv,
+        answer_value: tv,
+      };
+    } else if (type === 'radio' || type === 'checkbox') {
+      var labelEl = element.closest('label') || (element.id ? document.querySelector('label[for="' + element.id + '"]') : null) || element.parentElement;
+      var labelText = labelEl ? labelEl.textContent.trim() : (element.value || '');
+      vi = {
+        checked: element.checked,
+        answer_value: element.value,
+        answer_text: element.checked ? (labelText || element.value) : '',
+        word_count: labelText.trim() ? labelText.trim().split(/\s+/).length : 0,
+      };
+    } else {
+      vi = {
+        has_value: Boolean(element.value),
+        answer_value: element.value,
+        answer_text: element.value || '',
+      };
+    }
     return { field_name: element.name || null, field_id: element.id || null, field_tag: tag, field_type: type, ...vi };
   }
 
@@ -576,8 +602,30 @@ define([], function () {
     document.addEventListener('change', function (event) {
       var element = event.target;
       if (!element.matches('input, textarea, select')) return;
-      handleEvent('answer_changed', { question: getQuestionInfo(element), answer: getAnswerInfo(element) });
+      var qInfo = getQuestionInfo(element);
+      var aInfo = getAnswerInfo(element);
+      handleEvent('answer_changed', {
+        question: qInfo,
+        answer: aInfo,
+        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+        question_type: qInfo.question_type || 'multichoice',
+        answer_text: aInfo.answer_text || aInfo.answer_value || '',
+      });
     });
+
+    document.addEventListener('input', debounce(function (event) {
+      var element = event.target;
+      if (!element || !element.matches('textarea, input[type="text"]')) return;
+      var qInfo = getQuestionInfo(element);
+      var aInfo = getAnswerInfo(element);
+      handleEvent('answer_changed', {
+        question: qInfo,
+        answer: aInfo,
+        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+        question_type: qInfo.question_type || 'essay',
+        answer_text: element.value || '',
+      });
+    }, 2000), true);
   }
 
   function registerNetworkEventListeners() {
