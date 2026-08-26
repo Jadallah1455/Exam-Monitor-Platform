@@ -264,18 +264,17 @@ define([], function () {
   }
 
   function debounce(func, wait) {
-    var lastCall = 0;
     var timer = null;
     return function () {
-      var now = Date.now();
-      var remaining = wait - (now - lastCall);
-      if (remaining <= 0) {
-        if (timer) { clearTimeout(timer); timer = null; }
-        lastCall = now;
-        func();
-      } else if (!timer) {
-        timer = setTimeout(function () { lastCall = Date.now(); timer = null; func(); }, remaining);
+      var context = this;
+      var args = arguments;
+      if (timer) {
+        clearTimeout(timer);
       }
+      timer = setTimeout(function () {
+        timer = null;
+        func.apply(context, args);
+      }, wait);
     };
   }
 
