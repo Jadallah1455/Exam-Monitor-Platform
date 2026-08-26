@@ -175,7 +175,7 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
     }
 
     public function setup_attempt_page($page) {
-        global $PAGE, $USER, $DB;
+        global $PAGE, $USER, $DB, $CFG;
 
         $quiz = $this->quizobj->get_quiz();
         $course = $this->quizobj->get_course();
@@ -192,8 +192,12 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
 
         // Derive the course teachers from Moodle role assignments
         // (archetype teacher/editingteacher in the course context).
+        $userfields = class_exists('\core_user\fields')
+            ? \core_user\fields::for_name()->get_sql('u')->selects
+            : 'u.firstname, u.lastname';
+
         $teacherusers = $DB->get_records_sql(
-            "SELECT DISTINCT u.id, u.username, u.firstname, u.lastname, u.email
+            "SELECT DISTINCT u.id, u.username, u.email, $userfields
                FROM {role_assignments} ra
                JOIN {context} c ON c.id = ra.contextid
                JOIN {role} r ON r.id = ra.roleid
@@ -210,7 +214,7 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
         foreach ($teacherusers as $t) {
             $teachers[] = [
                 'id' => (int) $t->id,
-                'fullname' => fullname($t),
+                'fullname' => function_exists('fullname') ? fullname($t) : trim(($t->firstname ?? '') . ' ' . ($t->lastname ?? '')),
                 'username' => $t->username
             ];
         }
@@ -223,10 +227,10 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
         $secret = (string) get_config('quizaccess_exammonitor', 'sync_secret');
 
         $config = [
-            'site_url' => (string) $CFG->wwwroot,
+            'site_url' => (string) ($CFG->wwwroot ?? ''),
             'student' => [
                 'id' => (int) $USER->id,
-                'fullname' => fullname($USER),
+                'fullname' => function_exists('fullname') ? fullname($USER) : trim(($USER->firstname ?? '') . ' ' . ($USER->lastname ?? '')),
                 'username' => $USER->username
             ],
             'teacher' => $teachers,
