@@ -615,22 +615,31 @@ define([], function () {
       } catch (err) {}
     });
 
-    document.addEventListener('input', debounce(function (e) {
+    var essayDebounceTimer = null;
+    document.addEventListener('input', function (e) {
       try {
         var evt = e || window.event;
         var element = (evt && evt.target) ? evt.target : null;
         if (!element || typeof element.matches !== 'function' || !element.matches('textarea, input[type="text"]')) return;
-        var qInfo = getQuestionInfo(element);
-        var aInfo = getAnswerInfo(element);
-        handleEvent('answer_changed', {
-          question: qInfo,
-          answer: aInfo,
-          question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
-          question_type: qInfo.question_type || 'essay',
-          answer_text: element.value || '',
-        });
+
+        var targetEl = element;
+        if (essayDebounceTimer) clearTimeout(essayDebounceTimer);
+        essayDebounceTimer = setTimeout(function () {
+          try {
+            if (!targetEl) return;
+            var qInfo = getQuestionInfo(targetEl);
+            var aInfo = getAnswerInfo(targetEl);
+            handleEvent('answer_changed', {
+              question: qInfo,
+              answer: aInfo,
+              question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+              question_type: qInfo.question_type || 'essay',
+              answer_text: targetEl.value || '',
+            });
+          } catch (err) {}
+        }, 1500);
       } catch (err) {}
-    }, 2000), true);
+    }, true);
   }
 
   function registerNetworkEventListeners() {
