@@ -683,11 +683,14 @@ define([], function () {
     } catch (e) {}
   }
 
-  function showLockOverlay() {
+  function showLockOverlay(customMsg) {
     try {
       var lockKey = getQuizStorageKey('exammonitor_locked');
       localStorage.setItem(lockKey, '1');
       sessionStorage.setItem(lockKey, '1');
+
+      var msg = customMsg || 'تم إغلاق هذا الامتحان من قبل مدرّس المساق.<br>لا يمكنك تعديل أي إجابة أو استكمال الامتحان.';
+      var title = customMsg ? 'انتهى وقت الامتحان' : 'تم قفل الامتحان من قِبل المدرّس';
 
       var existing = document.getElementById('exammonitor-locked');
       if (!existing) {
@@ -696,15 +699,15 @@ define([], function () {
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:#7f1d1d;display:flex;align-items:center;justify-content:center;user-select:none;pointer-events:all;';
         overlay.innerHTML = '<div style="text-align:center;color:#fff;padding:40px;max-width:550px;">' +
           '<div style="font-size:72px;margin-bottom:20px;">🔒</div>' +
-          '<h1 style="font-size:28px;font-weight:900;margin:0 0 16px;letter-spacing:-0.5px;">تم قفل الامتحان من قِبل المدرّس</h1>' +
-          '<p style="font-size:17px;line-height:1.7;opacity:0.9;margin:0 0 20px;font-weight:600;">تم إنهاء وإغلاق محاولتك في هذا الامتحان بقرار مباشر من مدرّس المساق.<br>لا يمكنك تعديل أي إجابة أو استكمال الامتحان.</p>' +
+          '<h1 style="font-size:28px;font-weight:900;margin:0 0 16px;letter-spacing:-0.5px;">' + title + '</h1>' +
+          '<p style="font-size:17px;line-height:1.7;opacity:0.9;margin:0 0 20px;font-weight:600;">' + msg + '</p>' +
           '<div style="display:inline-block;background:rgba(0,0,0,0.3);padding:10px 24px;border-radius:30px;font-size:13px;font-weight:700;">حالة المحاولة: مقفلة نهائياً</div>' +
           '</div>';
         document.body.appendChild(overlay);
       }
 
-      // Disable all inputs, forms, and buttons completely
-      document.querySelectorAll('input, textarea, select, button, a').forEach(function(el) {
+      // Disable student input elements (NEVER touch hidden inputs like attempt, cmid, sesskey)
+      document.querySelectorAll('input:not([type="hidden"]), textarea, select, button, a').forEach(function(el) {
         el.disabled = true;
         el.style.pointerEvents = 'none';
         el.tabIndex = -1;
@@ -715,15 +718,6 @@ define([], function () {
       window.addEventListener('keyup', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
       window.addEventListener('keypress', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
       window.addEventListener('contextmenu', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
-
-      // Auto-submit responseform to permanently finish the attempt on Moodle if not submitted
-      try {
-        var respForm = document.getElementById('responseform') || document.querySelector('form.quiz-form') || document.querySelector('form[action*="attempt.php"]');
-        if (respForm && !respForm.dataset.emAutoFinished) {
-          respForm.dataset.emAutoFinished = 'true';
-          respForm.submit();
-        }
-      } catch (e) {}
     } catch (e) {}
   }
 
@@ -781,7 +775,7 @@ define([], function () {
           var adjusted = parseInt(el.dataset.emRawTime, 10) - totalReducedSec;
           if (adjusted <= 0) {
             el.textContent = '00:00 (انتهى الوقت)';
-            showLockOverlay();
+            showLockOverlay('تم تقليص وقت الامتحان وانتهى الوقت المخصص لك للإجابة.');
           } else {
             var newH = Math.floor(adjusted / 3600);
             var newM = Math.floor((adjusted % 3600) / 60);
