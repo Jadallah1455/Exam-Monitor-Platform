@@ -598,32 +598,38 @@ define([], function () {
   }
 
   function registerAnswerEventListeners() {
-    document.addEventListener('change', function (event) {
-      var element = event.target;
-      if (!element.matches('input, textarea, select')) return;
-      var qInfo = getQuestionInfo(element);
-      var aInfo = getAnswerInfo(element);
-      handleEvent('answer_changed', {
-        question: qInfo,
-        answer: aInfo,
-        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
-        question_type: qInfo.question_type || 'multichoice',
-        answer_text: aInfo.answer_text || aInfo.answer_value || '',
-      });
+    document.addEventListener('change', function (e) {
+      try {
+        var evt = e || window.event;
+        var element = (evt && evt.target) ? evt.target : null;
+        if (!element || typeof element.matches !== 'function' || !element.matches('input, textarea, select')) return;
+        var qInfo = getQuestionInfo(element);
+        var aInfo = getAnswerInfo(element);
+        handleEvent('answer_changed', {
+          question: qInfo,
+          answer: aInfo,
+          question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+          question_type: qInfo.question_type || 'multichoice',
+          answer_text: aInfo.answer_text || aInfo.answer_value || '',
+        });
+      } catch (err) {}
     });
 
-    document.addEventListener('input', debounce(function (event) {
-      var element = event.target;
-      if (!element || !element.matches('textarea, input[type="text"]')) return;
-      var qInfo = getQuestionInfo(element);
-      var aInfo = getAnswerInfo(element);
-      handleEvent('answer_changed', {
-        question: qInfo,
-        answer: aInfo,
-        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
-        question_type: qInfo.question_type || 'essay',
-        answer_text: element.value || '',
-      });
+    document.addEventListener('input', debounce(function (e) {
+      try {
+        var evt = e || window.event;
+        var element = (evt && evt.target) ? evt.target : null;
+        if (!element || typeof element.matches !== 'function' || !element.matches('textarea, input[type="text"]')) return;
+        var qInfo = getQuestionInfo(element);
+        var aInfo = getAnswerInfo(element);
+        handleEvent('answer_changed', {
+          question: qInfo,
+          answer: aInfo,
+          question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+          question_type: qInfo.question_type || 'essay',
+          answer_text: element.value || '',
+        });
+      } catch (err) {}
     }, 2000), true);
   }
 
