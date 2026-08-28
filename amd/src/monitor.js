@@ -663,7 +663,8 @@ define([], function () {
   function getQuizStorageKey(prefix) {
     var qid = (moodleContext.quiz && moodleContext.quiz.id) || '0';
     var uid = (moodleContext.student && moodleContext.student.id) || '0';
-    return prefix + '_q' + qid + '_u' + uid;
+    var sess = sessionId || getSessionId() || '0';
+    return prefix + '_q' + qid + '_u' + uid + '_s_' + sess;
   }
 
   function showMessageOverlay(message) {
