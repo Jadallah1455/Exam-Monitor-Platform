@@ -721,6 +721,38 @@ define([], function () {
     } catch (e) {}
   }
 
+  function hideLockOverlay() {
+    try {
+      var lockKey = getQuizStorageKey('exammonitor_locked');
+      localStorage.removeItem(lockKey);
+      sessionStorage.removeItem(lockKey);
+      var existing = document.getElementById('exammonitor-locked');
+      if (existing) existing.remove();
+      document.querySelectorAll('input, textarea, select, button, a').forEach(function(el) {
+        el.disabled = false;
+        el.style.pointerEvents = '';
+        el.tabIndex = 0;
+      });
+    } catch (e) {}
+  }
+
+  function submitQuizGracefully() {
+    try {
+      var form = document.getElementById('responseform') || document.querySelector('form.mform') || document.querySelector('form[action*="processattempt"]');
+      if (form && !form._emSubmitted) {
+        form._emSubmitted = true;
+        form.querySelectorAll('input, select, textarea').forEach(function(el) {
+          el.disabled = false;
+        });
+        var timeup = form.querySelector('input[name="timeup"]');
+        if (timeup) timeup.value = '1';
+        var finish = form.querySelector('input[name="finishattempt"]');
+        if (finish) finish.value = '1';
+        form.submit();
+      }
+    } catch (e) {}
+  }
+
   function showLockOverlay(customMsg) {
     try {
       var lockKey = getQuizStorageKey('exammonitor_locked');
@@ -744,14 +776,13 @@ define([], function () {
         document.body.appendChild(overlay);
       }
 
-      // Disable student input elements (NEVER touch hidden inputs like attempt, cmid, sesskey)
+      // Block interaction with student answers while keeping form parameters intact
       document.querySelectorAll('input:not([type="hidden"]), textarea, select, button, a').forEach(function(el) {
-        el.disabled = true;
         el.style.pointerEvents = 'none';
         el.tabIndex = -1;
       });
 
-      // Intercept any clicks and keyboard events
+      // Intercept keyboard events
       window.addEventListener('keydown', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
       window.addEventListener('keyup', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
       window.addEventListener('keypress', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
@@ -813,7 +844,8 @@ define([], function () {
           var adjusted = parseInt(el.dataset.emRawTime, 10) - totalReducedSec;
           if (adjusted <= 0) {
             el.textContent = '00:00 (انتهى الوقت)';
-            showLockOverlay('تم تقليص وقت الامتحان وانتهى الوقت المخصص لك للإجابة.');
+            showToast('انتهى الوقت المخصص للإجابة — جاري حفظ وإرسال إجاباتك...');
+            setTimeout(submitQuizGracefully, 1500);
           } else {
             var newH = Math.floor(adjusted / 3600);
             var newM = Math.floor((adjusted % 3600) / 60);
@@ -865,6 +897,8 @@ define([], function () {
         // Permanent lock check from server
         if (data.is_locked) {
           showLockOverlay();
+        } else {
+          hideLockOverlay();
         }
 
         // Cumulative reduced minutes from server
@@ -888,6 +922,10 @@ define([], function () {
             showLockOverlay();
             acknowledgeAction(action.id);
             handleEvent('teacher_action_received', { action_type: 'lock_exam', action_id: action.id });
+          } else if (action.action === 'unlock_exam') {
+            hideLockOverlay();
+            acknowledgeAction(action.id);
+            handleEvent('teacher_action_received', { action_type: 'unlock_exam', action_id: action.id });
           } else if (action.action === 'reduce_time') {
             reduceTime(action.minutes || 5);
             acknowledgeAction(action.id);
