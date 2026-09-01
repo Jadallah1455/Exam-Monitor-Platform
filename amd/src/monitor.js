@@ -453,18 +453,36 @@ define([], function () {
 
     document.addEventListener('copy', function (event) {
       var sel = window.getSelection();
-      var selLen = sel ? sel.toString().length : 0;
+      var selStr = sel ? sel.toString() : '';
+      var selLen = selStr.length;
+      var activeEl = document.activeElement;
+      var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
       handleEvent('copy', {
         action: enforce.copy ? 'copy_blocked' : 'copy_detected',
         selection_length: selLen,
-        selection_text: selLen > 0 ? sel.toString().substring(0, 200) : '',
+        selection_text: selLen > 0 ? selStr.substring(0, 500) : '',
+        question: qInfo,
+        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
       });
       if (enforce.copy) { event.preventDefault(); showToast('النسخ غير مسموح خلال هذا الامتحان'); }
       resetIdle();
     });
 
     document.addEventListener('paste', function (event) {
-      handleEvent('paste', { action: enforce.paste ? 'paste_blocked' : 'paste_detected' });
+      var pastedText = '';
+      try {
+        if (event.clipboardData) pastedText = event.clipboardData.getData('text') || '';
+        else if (window.clipboardData) pastedText = window.clipboardData.getData('text') || '';
+      } catch (e) {}
+      var activeEl = document.activeElement;
+      var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
+      handleEvent('paste', {
+        action: enforce.paste ? 'paste_blocked' : 'paste_detected',
+        pasted_text: pastedText ? pastedText.substring(0, 500) : '',
+        pasted_length: pastedText ? pastedText.length : 0,
+        question: qInfo,
+        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+      });
       if (enforce.paste) { event.preventDefault(); showToast('اللصق غير مسموح خلال هذا الامتحان'); }
       resetIdle();
     });
@@ -476,7 +494,17 @@ define([], function () {
     });
 
     document.addEventListener('cut', function (event) {
-      handleEvent('cut', { action: enforce.copy ? 'cut_blocked' : 'cut_detected' });
+      var sel = window.getSelection();
+      var selStr = sel ? sel.toString() : '';
+      var activeEl = document.activeElement;
+      var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
+      handleEvent('cut', {
+        action: enforce.copy ? 'cut_blocked' : 'cut_detected',
+        selection_length: selStr.length,
+        selection_text: selStr.length > 0 ? selStr.substring(0, 500) : '',
+        question: qInfo,
+        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+      });
       if (enforce.copy) event.preventDefault();
       resetIdle();
     });
@@ -927,9 +955,13 @@ define([], function () {
       // Request fullscreen on start if enforced
       requestFullscreen();
 
+      // Count visible question blocks in Moodle DOM
+      var totalQuestions = document.querySelectorAll('.que').length || 1;
+
       // Send initial page_view event immediately so student appears in dashboard in real-time
       handleEvent('page_view', {
         page_url: window.location.href,
+        total_questions: totalQuestions,
         device_telemetry: getDeviceTelemetry(),
         network_info: getNetworkInfo(),
       });
