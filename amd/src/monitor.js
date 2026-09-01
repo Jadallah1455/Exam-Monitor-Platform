@@ -297,10 +297,73 @@ define([], function () {
     try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue.slice(-MAX_QUEUE_SIZE))); } catch (e) {}
   }
 
+  // =====================================================
+  // Payload Encryption (AES-256-GCM via Web Crypto API)
+  // =====================================================
+  var cryptoKeyCache = null;
+
+  async function getCryptoKey(secret) {
+    if (cryptoKeyCache) return cryptoKeyCache;
+    if (!secret || typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) return null;
+    try {
+      var enc = new TextEncoder();
+      var keyData = await window.crypto.subtle.digest('SHA-256', enc.encode(secret));
+      cryptoKeyCache = await window.crypto.subtle.importKey(
+        'raw',
+        keyData,
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt', 'decrypt']
+      );
+      return cryptoKeyCache;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function bufferToBase64(buffer) {
+    var binary = '';
+    var bytes = new Uint8Array(buffer);
+    for (var i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  }
+
+  async function encryptPayload(dataObj, secret) {
+    if (!secret) return dataObj;
+    var rawJson = JSON.stringify(dataObj);
+    var key = await getCryptoKey(secret);
+    if (!key || typeof window.crypto.getRandomValues !== 'function') {
+      return dataObj;
+    }
+
+    try {
+      var enc = new TextEncoder();
+      var iv = window.crypto.getRandomValues(new Uint8Array(12));
+      var ciphertext = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        enc.encode(rawJson)
+      );
+
+      return {
+        encrypted: true,
+        v: 1,
+        iv: bufferToBase64(iv),
+        data: bufferToBase64(ciphertext),
+      };
+    } catch (e) {
+      return dataObj;
+    }
+  }
+
   async function sendBatch(events) {
     if (!serverUrl || events.length === 0) return;
     try {
-      var payload = JSON.stringify({ events: events });
+      var rawPayload = { events: events };
+      var encPayload = await encryptPayload(rawPayload, pluginSecret);
+      var payload = JSON.stringify(encPayload);
 
       var response = await fetch(serverUrl, {
         method: 'POST',
@@ -931,23 +994,27 @@ define([], function () {
     } catch (e) {}
   }
 
-  function pollTeacherActions() {
+  async function pollTeacherActions() {
     if (!serverUrl || !pluginSecret) return;
     try {
       var checkUrl = serverUrl.replace('/telemetry', '/api/teacher/actions/check');
-      fetch(checkUrl, {
+      var reqData = {
+        secret: pluginSecret,
+        session_id: sessionId,
+        student_id: moodleContext.student ? moodleContext.student.id : 0,
+        exam_id: moodleContext.quiz ? moodleContext.quiz.id : 0,
+      };
+      var encReq = await encryptPayload(reqData, pluginSecret);
+      var res = await fetch(checkUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          secret: pluginSecret,
-          session_id: sessionId,
-          student_id: moodleContext.student ? moodleContext.student.id : 0,
-          exam_id: moodleContext.quiz ? moodleContext.quiz.id : 0,
-        }),
-      })
-      .then(function(res) { return res.json(); })
-      .then(function(data) {
-        if (!data) return;
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Exam-Monitor-Secret': pluginSecret || ''
+        },
+        body: JSON.stringify(encReq),
+      });
+      var data = await res.json();
+      if (!data) return;
 
         // Permanent lock check from server
         if (data.is_locked) {
