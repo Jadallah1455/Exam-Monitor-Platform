@@ -670,6 +670,46 @@ define([], function () {
     }, true);
   }
 
+  var devToolsTrapInterval = null;
+  var isDevToolsOpen = false;
+
+  function startDevToolsTrap() {
+    if (devToolsTrapInterval) return;
+
+    devToolsTrapInterval = setInterval(function () {
+      try {
+        var widthDiff = window.outerWidth - window.innerWidth;
+        var heightDiff = window.outerHeight - window.innerHeight;
+        var threshold = 160;
+        var detected = (widthDiff > threshold || heightDiff > threshold);
+
+        // Timing debugger check
+        var start = performance.now();
+        (function () {}['constructor']('debugger'))();
+        var duration = performance.now() - start;
+
+        if (duration > 100) {
+          detected = true;
+        }
+
+        if (detected) {
+          if (!isDevToolsOpen) {
+            isDevToolsOpen = true;
+            handleEvent('devtools_opened', {
+              action: 'devtools_detected',
+              width_diff: widthDiff,
+              height_diff: heightDiff,
+              timing_delay_ms: Math.round(duration),
+            });
+            showToast('🚨 تم رصد فتح أدوات المطور (DevTools) — هذا الإجراء محظور ومسجل لدى مراقب الامتحان');
+          }
+        } else {
+          isDevToolsOpen = false;
+        }
+      } catch (e) {}
+    }, 2000);
+  }
+
   function registerNetworkEventListeners() {
     window.addEventListener('online', function () {
       handleEvent('network_online', { reason: 'browser_detected_online_status' });
@@ -678,6 +718,21 @@ define([], function () {
     window.addEventListener('offline', function () {
       handleEvent('network_offline', { reason: 'browser_detected_offline_status' });
     });
+
+    try {
+      var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (conn) {
+        conn.addEventListener('change', function () {
+          handleEvent('network_changed', {
+            effective_type: conn.effectiveType || null,
+            downlink: conn.downlink || null,
+            rtt: conn.rtt || null,
+            save_data: conn.saveData || false,
+          });
+          showToast('📡 تم رصد تغيير في حالة أو سرعة اتصال الشبكة');
+        });
+      }
+    } catch (e) {}
   }
 
   // =====================================================
@@ -989,6 +1044,7 @@ define([], function () {
       startSummaryFlush();
       startTimerManager();
       startActionPolling();
+      startDevToolsTrap();
 
       // Request fullscreen on start if enforced
       requestFullscreen();
