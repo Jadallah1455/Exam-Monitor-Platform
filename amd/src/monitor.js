@@ -856,6 +856,10 @@ define([], function () {
 
   function submitQuizGracefully() {
     try {
+      if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer && typeof M.mod_quiz.timer.endtime === 'function') {
+        M.mod_quiz.timer.endtime();
+        return;
+      }
       var form = document.getElementById('responseform') || document.querySelector('form.mform') || document.querySelector('form[action*="processattempt"]');
       if (form && !form._emSubmitted) {
         form._emSubmitted = true;
@@ -864,8 +868,6 @@ define([], function () {
         });
         var timeup = form.querySelector('input[name="timeup"]');
         if (timeup) timeup.value = '1';
-        var finish = form.querySelector('input[name="finishattempt"]');
-        if (finish) finish.value = '1';
         form.submit();
       }
     } catch (e) {}
@@ -930,12 +932,14 @@ define([], function () {
       var totalReducedSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
       if (totalReducedSec <= 0) return;
 
-      // 1. If Moodle YUI / JS timer object exists, modify it
+      // 1. If Moodle YUI / JS timer object exists, modify it smoothly by delta
       if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer) {
         if (typeof M.mod_quiz.timer.seconds === 'number') {
-          if (!M.mod_quiz.timer._emAdjusted) {
+          var previouslyAdjusted = M.mod_quiz.timer._emAdjusted || 0;
+          var deltaSec = totalReducedSec - previouslyAdjusted;
+          if (deltaSec > 0) {
             M.mod_quiz.timer._emAdjusted = totalReducedSec;
-            M.mod_quiz.timer.seconds = Math.max(0, M.mod_quiz.timer.seconds - totalReducedSec);
+            M.mod_quiz.timer.seconds = Math.max(0, M.mod_quiz.timer.seconds - deltaSec);
           }
         }
       }
@@ -1054,8 +1058,7 @@ define([], function () {
             handleEvent('teacher_action_received', { action_type: 'reduce_time', action_id: action.id, minutes: action.minutes });
           }
         });
-      })
-      .catch(function() {});
+      }
     } catch (e) {}
   }
 
