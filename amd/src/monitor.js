@@ -358,14 +358,20 @@ define([], function () {
     }
   }
 
-  async function sendBatch(events) {
+  function sendBatch(events) {
     if (!serverUrl || events.length === 0) return;
     try {
-      var rawPayload = { events: events };
-      var encPayload = await encryptPayload(rawPayload, pluginSecret);
-      var payload = JSON.stringify(encPayload);
+      var targetUrl = serverUrl;
+      if (pluginSecret) {
+        targetUrl += (targetUrl.indexOf('?') === -1 ? '?' : '&') + 'k=' + encodeURIComponent(pluginSecret);
+      }
 
-      var response = await fetch(serverUrl, {
+      var payload = JSON.stringify({
+        secret: pluginSecret || '',
+        events: events
+      });
+
+      fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -373,20 +379,21 @@ define([], function () {
         },
         body: payload,
         keepalive: true
+      })
+      .then(function(response) {
+        if (!response.ok && response.status !== 204) {
+          throw new Error('HTTP ' + response.status);
+        }
+        resetRetryDelay();
+      })
+      .catch(function(e) {
+        var localQueue = getLocalQueue();
+        localQueue.push.apply(localQueue, events);
+        saveLocalQueue(localQueue);
+        var delay = getNextRetryDelay();
+        setTimeout(retryLocalQueue, delay);
       });
-
-      if (!response.ok && response.status !== 204) {
-        throw new Error('HTTP ' + response.status);
-      }
-
-      resetRetryDelay();
-    } catch (e) {
-      var localQueue = getLocalQueue();
-      localQueue.push.apply(localQueue, events);
-      saveLocalQueue(localQueue);
-      var delay = getNextRetryDelay();
-      setTimeout(retryLocalQueue, delay);
-    }
+    } catch (e) {}
   }
 
   function flushBatch() {
@@ -987,58 +994,85 @@ define([], function () {
     timerManagerInterval = setInterval(applyReducedTime, 500);
   }
 
+  function getApiUrl(subpath) {
+    if (!serverUrl) return '';
+    var base = serverUrl.replace(/\/telemetry\/?$/i, '').replace(/\/+$/, '');
+    return base + subpath;
+  }
+
   function acknowledgeAction(actionId) {
     if (!serverUrl || !pluginSecret) return;
     try {
-      fetch(serverUrl.replace('/telemetry', '/api/teacher/actions/' + actionId + '/ack'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: pluginSecret }),
-      });
-    } catch (e) {}
-  }
-
-  async function pollTeacherActions() {
-    if (!serverUrl || !pluginSecret) return;
-    try {
-      var checkUrl = serverUrl.replace('/telemetry', '/api/teacher/actions/check');
-      var reqData = {
-        secret: pluginSecret,
-        session_id: sessionId,
-        student_id: moodleContext.student ? moodleContext.student.id : 0,
-        exam_id: moodleContext.quiz ? moodleContext.quiz.id : 0,
-      };
-      var encReq = await encryptPayload(reqData, pluginSecret);
-      var res = await fetch(checkUrl, {
+      var ackUrl = getApiUrl('/api/teacher/actions/' + actionId + '/ack');
+      if (pluginSecret) {
+        ackUrl += (ackUrl.indexOf('?') === -1 ? '?' : '&') + 'k=' + encodeURIComponent(pluginSecret);
+      }
+      fetch(ackUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Exam-Monitor-Secret': pluginSecret || ''
         },
-        body: JSON.stringify(encReq),
+        body: JSON.stringify({ secret: pluginSecret }),
       });
-      var data = await res.json();
-      if (!data) return;
+    } catch (e) {}
+  }
 
-        // Permanent lock check from server
+  function pollTeacherActions() {
+    if (!serverUrl || !pluginSecret) return;
+    try {
+      var checkUrl = getApiUrl('/api/teacher/actions/check');
+      if (pluginSecret) {
+        checkUrl += (checkUrl.indexOf('?') === -1 ? '?' : '&') + 'k=' + encodeURIComponent(pluginSecret);
+      }
+
+      var reqData = {
+        secret: pluginSecret,
+        session_id: sessionId || '',
+        student_id: (moodleContext.student && moodleContext.student.id) ? parseInt(moodleContext.student.id, 10) : 0,
+        exam_id: (moodleContext.quiz && moodleContext.quiz.id) ? parseInt(moodleContext.quiz.id, 10) : 0,
+      };
+
+      fetch(checkUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Exam-Monitor-Secret': pluginSecret || ''
+        },
+        body: JSON.stringify(reqData),
+      })
+      .then(function(res) {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(function(data) {
+        if (!data) return;
+
+        // 1. Permanent lock check from server
         if (data.is_locked) {
           showLockOverlay();
         } else {
           hideLockOverlay();
         }
 
-        // Cumulative reduced minutes from server
-        if (data.total_reduced_minutes && data.total_reduced_minutes > 0) {
+        // 2. Cumulative reduced minutes from server
+        if (typeof data.total_reduced_minutes === 'number' && data.total_reduced_minutes > 0) {
           var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
           var targetSec = data.total_reduced_minutes * 60;
-          if (parseInt(localStorage.getItem(timerKey) || '0', 10) < targetSec) {
+          var curSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+          if (curSec < targetSec) {
             localStorage.setItem(timerKey, targetSec);
             sessionStorage.setItem(timerKey, targetSec);
             applyReducedTime();
           }
         }
 
+        // 3. Process actions list
         var actions = data.actions || [];
+        if (actions.length > 0) {
+          console.log('⚡ [ExamMonitor Actions Received]', actions);
+        }
+
         actions.forEach(function(action) {
           if (action.action === 'send_message') {
             showMessageOverlay(action.message || 'رسالة من المدرّس');
@@ -1058,7 +1092,10 @@ define([], function () {
             handleEvent('teacher_action_received', { action_type: 'reduce_time', action_id: action.id, minutes: action.minutes });
           }
         });
-      }
+      })
+      .catch(function(err) {
+        console.warn('[ExamMonitor Action Poll Error]', err);
+      });
     } catch (e) {}
   }
 
