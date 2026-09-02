@@ -996,8 +996,15 @@ define([], function () {
 
   function getApiUrl(subpath) {
     if (!serverUrl) return '';
-    var base = serverUrl.replace(/\/telemetry\/?$/i, '').replace(/\/+$/, '');
-    return base + subpath;
+    try {
+      var u = new URL(serverUrl, window.location.href);
+      var cleanPath = u.pathname.replace(/\/telemetry\/?$/i, '').replace(/\/+$/, '');
+      return u.origin + cleanPath + subpath;
+    } catch (e) {
+      var urlWithoutQuery = serverUrl.split('?')[0].split('#')[0];
+      var base = urlWithoutQuery.replace(/\/telemetry\/?$/i, '').replace(/\/+$/, '');
+      return base + subpath;
+    }
   }
 
   function acknowledgeAction(actionId) {
