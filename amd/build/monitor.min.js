@@ -821,6 +821,24 @@ define([], function () {
   var actionPollTimer = null;
   var timerManagerInterval = null;
   var pluginSecret = '';
+  var processedActionIds = {};
+  var lastAppliedReducedSec = 0;
+  var isExamLocked = false;
+
+  function lockInputInterceptor(e) {
+    if (isExamLocked) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      return false;
+    }
+  }
+
+  function registerLockListeners() {
+    window.addEventListener('keydown', lockInputInterceptor, true);
+    window.addEventListener('keyup', lockInputInterceptor, true);
+    window.addEventListener('keypress', lockInputInterceptor, true);
+    window.addEventListener('contextmenu', lockInputInterceptor, true);
+  }
 
   function getQuizStorageKey(prefix) {
     var qid = (moodleContext.quiz && moodleContext.quiz.id) || '0';
@@ -848,6 +866,7 @@ define([], function () {
 
   function hideLockOverlay() {
     try {
+      isExamLocked = false;
       var lockKey = getQuizStorageKey('exammonitor_locked');
       localStorage.removeItem(lockKey);
       sessionStorage.removeItem(lockKey);
@@ -882,6 +901,7 @@ define([], function () {
 
   function showLockOverlay(customMsg) {
     try {
+      isExamLocked = true;
       var lockKey = getQuizStorageKey('exammonitor_locked');
       localStorage.setItem(lockKey, '1');
       sessionStorage.setItem(lockKey, '1');
@@ -908,12 +928,6 @@ define([], function () {
         el.style.pointerEvents = 'none';
         el.tabIndex = -1;
       });
-
-      // Intercept keyboard events
-      window.addEventListener('keydown', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
-      window.addEventListener('keyup', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
-      window.addEventListener('keypress', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
-      window.addEventListener('contextmenu', function(e) { e.stopImmediatePropagation(); e.preventDefault(); }, true);
     } catch (e) {}
   }
 
@@ -939,15 +953,17 @@ define([], function () {
       var totalReducedSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
       if (totalReducedSec <= 0) return;
 
+      var deltaSec = totalReducedSec - lastAppliedReducedSec;
+      if (deltaSec <= 0) return;
+      lastAppliedReducedSec = totalReducedSec;
+
       // 1. If Moodle YUI / JS timer object exists, modify it smoothly by delta
       if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer) {
         if (typeof M.mod_quiz.timer.seconds === 'number') {
-          var previouslyAdjusted = M.mod_quiz.timer._emAdjusted || 0;
-          var deltaSec = totalReducedSec - previouslyAdjusted;
-          if (deltaSec > 0) {
-            M.mod_quiz.timer._emAdjusted = totalReducedSec;
-            M.mod_quiz.timer.seconds = Math.max(0, M.mod_quiz.timer.seconds - deltaSec);
-          }
+          M.mod_quiz.timer.seconds = Math.max(0, M.mod_quiz.timer.seconds - deltaSec);
+        }
+        if (typeof M.mod_quiz.timer.endtime === 'number') {
+          M.mod_quiz.timer.endtime -= deltaSec;
         }
       }
 
@@ -967,10 +983,7 @@ define([], function () {
             s = parseInt(match[2], 10);
           }
           var currentRemaining = h * 3600 + m * 60 + s;
-          if (!el.dataset.emRawTime) {
-            el.dataset.emRawTime = currentRemaining;
-          }
-          var adjusted = parseInt(el.dataset.emRawTime, 10) - totalReducedSec;
+          var adjusted = Math.max(0, currentRemaining - deltaSec);
           if (adjusted <= 0) {
             el.textContent = '00:00 (انتهى الوقت)';
             showToast('انتهى الوقت المخصص للإجابة — جاري حفظ وإرسال إجاباتك...');
@@ -991,7 +1004,7 @@ define([], function () {
 
   function startTimerManager() {
     if (timerManagerInterval) return;
-    timerManagerInterval = setInterval(applyReducedTime, 500);
+    timerManagerInterval = setInterval(applyReducedTime, 1000);
   }
 
   function getApiUrl(subpath) {
@@ -1050,9 +1063,23 @@ define([], function () {
       })
       .then(function(res) {
         if (!res.ok) return null;
-        return res.json();
+        return res.text();
       })
-      .then(function(data) {
+      .then(function(rawText) {
+        if (!rawText) return;
+        var data = null;
+        try {
+          var startIdx = rawText.indexOf('{');
+          var endIdx = rawText.lastIndexOf('}');
+          if (startIdx !== -1 && endIdx > startIdx) {
+            data = JSON.parse(rawText.substring(startIdx, endIdx + 1));
+          } else {
+            data = JSON.parse(rawText);
+          }
+        } catch (parseErr) {
+          console.warn('[ExamMonitor Action Poll JSON Error]', parseErr, rawText.substring(0, 100));
+          return;
+        }
         if (!data) return;
 
         // 1. Permanent lock check from server
@@ -1074,13 +1101,20 @@ define([], function () {
           }
         }
 
-        // 3. Process actions list
+        // 3. Process actions list with deduplication
         var actions = data.actions || [];
         if (actions.length > 0) {
           console.log('⚡ [ExamMonitor Actions Received]', actions);
         }
 
         actions.forEach(function(action) {
+          if (!action || !action.id) return;
+          if (processedActionIds[action.id]) {
+            acknowledgeAction(action.id);
+            return;
+          }
+          processedActionIds[action.id] = true;
+
           if (action.action === 'send_message') {
             showMessageOverlay(action.message || 'رسالة من المدرّس');
             acknowledgeAction(action.id);
@@ -1094,9 +1128,10 @@ define([], function () {
             acknowledgeAction(action.id);
             handleEvent('teacher_action_received', { action_type: 'unlock_exam', action_id: action.id });
           } else if (action.action === 'reduce_time') {
-            reduceTime(action.minutes || 5);
+            var min = parseInt(action.minutes, 10) || 5;
+            showToast('⚠ تم تقليص وقت الامتحان بـ ' + min + ' دقائق من قِبل المدرّس');
             acknowledgeAction(action.id);
-            handleEvent('teacher_action_received', { action_type: 'reduce_time', action_id: action.id, minutes: action.minutes });
+            handleEvent('teacher_action_received', { action_type: 'reduce_time', action_id: action.id, minutes: min });
           }
         });
       })
@@ -1151,6 +1186,7 @@ define([], function () {
       registerAnswerEventListeners();
       registerNetworkEventListeners();
       registerFullscreenListener();
+      registerLockListeners();
 
       startBatchTimer();
       startHeartbeat();
