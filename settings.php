@@ -22,13 +22,16 @@ if ($hassiteconfig) {
         ''
     ));
 
-    global $CFG;
+    global $CFG, $PAGE;
 
     $settings->add(new admin_setting_heading(
         'exammonitor_sync_inject',
         '',
-        '<div id="exammonitor-sync-result" style="margin-top:8px"></div>
-        <script>
+        '<div id="exammonitor-sync-result" style="margin-top:8px"></div>'
+    ));
+
+    if (isset($PAGE)) {
+        $PAGE->requires->js_init_code('
         (function(){
             var resultDiv = document.getElementById("exammonitor-sync-result");
 
@@ -54,7 +57,6 @@ if ($hassiteconfig) {
                 }).then(function(r){ return r.json(); }).then(function(d){
                     if (d.ok) {
                         var s = d.synced || {};
-                        var total = (s.courses||0) + (s.teachers||0) + (s.students||0) + (s.quizzes||0);
                         if (resultDiv) {
                             resultDiv.className = "alert alert-success";
                             resultDiv.innerHTML =
@@ -82,13 +84,11 @@ if ($hassiteconfig) {
                 });
             }
 
-            // 1. Detect saved=1 in URL (Moodle default)
             if (window.location.search.indexOf("saved=1") !== -1) {
                 setTimeout(doSync, 500);
                 return;
             }
 
-            // 2. Use MutationObserver to detect Moodle success notification
             var target = document.querySelector("[data-region=\"notifications\"]") || document.querySelector(".adminsettings") || document.body;
             var observer = new MutationObserver(function(mutations){
                 for (var i = 0; i < mutations.length; i++) {
@@ -109,20 +109,7 @@ if ($hassiteconfig) {
                 }
             });
             observer.observe(target, {childList: true, subtree: true});
-
-            // 3. Fallback: check URL hash or body text periodically (max 3 seconds)
-            var checks = 0;
-            var interval = setInterval(function(){
-                checks++;
-                if (checks > 10) { clearInterval(interval); return; }
-                if (document.querySelector(".alert-success, .success") ||
-                    document.body.innerHTML.indexOf("Changes saved") !== -1 ||
-                    document.body.innerHTML.indexOf("تم حفظ التغييرات") !== -1) {
-                    clearInterval(interval);
-                    setTimeout(doSync, 300);
-                }
-            }, 300);
         })();
-        </script>'
-    ));
+        ');
+    }
 }
