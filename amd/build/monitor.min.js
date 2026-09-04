@@ -1428,15 +1428,23 @@ define([], function () {
       // Immediate check if attempt was already completed/submitted in this session
       var submitKey = getQuizStorageKey('exammonitor_submitted');
       if (sessionStorage.getItem(submitKey) === '1') {
-        if (moodleContext.quiz && moodleContext.quiz.attempt_id) {
-          var site = (moodleContext.site_url || '').replace(/\/+$/, '');
-          var targetReviewUrl = site + '/mod/quiz/review.php?attempt=' + encodeURIComponent(moodleContext.quiz.attempt_id);
-          // Only redirect if on attempt.php and NOT already on review or view
-          if (curHref.indexOf('review.php') === -1 && curHref.indexOf('view.php') === -1) {
+        var attemptId = parseInt((moodleContext.quiz && moodleContext.quiz.attempt_id) || 0, 10);
+        var cmid = parseInt((moodleContext.quiz && moodleContext.quiz.cmid) || 0, 10);
+        var site = (moodleContext.site_url || '').replace(/\/+$/, '');
+
+        // Only redirect if on attempt.php and NOT already on review or view
+        if (curHref.indexOf('review.php') === -1 && curHref.indexOf('view.php') === -1) {
+          sessionStorage.removeItem(submitKey);
+          if (attemptId > 0) {
+            var targetReviewUrl = site + '/mod/quiz/review.php?attempt=' + encodeURIComponent(attemptId);
             showLockOverlay('انتهى وقت الامتحان وتم تسليم إجاباتك بنجاح.');
-            sessionStorage.removeItem(submitKey);
             setTimeout(function() {
               window.location.replace(targetReviewUrl);
+            }, 800);
+          } else if (cmid > 0) {
+            var targetViewUrl = site + '/mod/quiz/view.php?id=' + encodeURIComponent(cmid);
+            setTimeout(function() {
+              window.location.replace(targetViewUrl);
             }, 800);
           }
         }
