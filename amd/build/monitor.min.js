@@ -430,17 +430,17 @@ define([], function () {
   // =====================================================
   // UI: Toast
   // =====================================================
-  function showToast(message) {
-    if (!enforce.copy && !enforce.paste && !enforce.rightclick && !enforce.print && !enforce.shortcuts) return;
+  function showToast(message, force) {
+    if (!force && !enforce.copy && !enforce.paste && !enforce.rightclick && !enforce.print && !enforce.shortcuts) return;
     try {
       var existing = document.getElementById('exammonitor-toast');
       if (existing) existing.remove();
       var toast = document.createElement('div');
       toast.id = 'exammonitor-toast';
       toast.textContent = message;
-      toast.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:999999;background:#b91c1c;color:#fff;padding:12px 18px;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;box-shadow:0 4px 18px rgba(0,0,0,0.35);transition:opacity .3s;max-width:320px;';
+      toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:999999;background:#1e293b;color:#fff;padding:14px 20px;border-radius:14px;font-family:inherit;font-size:14px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.1);transition:opacity .3s;max-width:360px;direction:rtl;text-align:right;';
       document.body.appendChild(toast);
-      window.setTimeout(function () { toast.style.opacity = '0'; window.setTimeout(function () { toast.remove(); }, 350); }, 2600);
+      window.setTimeout(function () { toast.style.opacity = '0'; window.setTimeout(function () { toast.remove(); }, 350); }, 3500);
     } catch (e) {}
   }
 
@@ -934,11 +934,62 @@ define([], function () {
   }
 
   var isSubmittingGracefully = false;
+  var isTerminating = false;
+
+  function terminateAndSubmitQuiz(customMsg) {
+    if (isTerminating || isSubmittingGracefully) return;
+    isTerminating = true;
+
+    // 1. Immediately cancel all repeating timers to prevent background requests or loops
+    if (actionPollTimer) { clearInterval(actionPollTimer); actionPollTimer = null; }
+    if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+
+    var termKey = getQuizStorageKey('exammonitor_terminated');
+    var submitKey = getQuizStorageKey('exammonitor_submitted');
+    var lockKey = getQuizStorageKey('exammonitor_locked');
+    sessionStorage.setItem(termKey, '1');
+    sessionStorage.setItem(submitKey, '1');
+    sessionStorage.removeItem(lockKey);
+    localStorage.removeItem(lockKey);
+
+    // 2. Display calm, clean, professional Red Termination Overlay
+    try {
+      var exLock = document.getElementById('exammonitor-locked');
+      if (exLock) exLock.remove();
+      var existing = document.getElementById('exammonitor-terminated');
+      if (!existing) {
+        var overlay = document.createElement('div');
+        overlay.id = 'exammonitor-terminated';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:linear-gradient(135deg, #991b1b 0%, #7f1d1d 100%);display:flex;align-items:center;justify-content:center;user-select:none;pointer-events:all;font-family:inherit;padding:20px;';
+        overlay.innerHTML = '<div style="background:rgba(0,0,0,0.45);border:1.5px solid rgba(255,255,255,0.2);border-radius:24px;padding:36px 30px;max-width:520px;text-align:center;box-shadow:0 25px 50px -12px rgba(0,0,0,0.6);color:#fff;">' +
+          '<div style="font-size:52px;margin-bottom:12px;">🛑</div>' +
+          '<h2 style="font-size:22px;font-weight:900;margin:0 0 10px;letter-spacing:-0.5px;color:#fff;">تم إنهاء جلسة الامتحان</h2>' +
+          '<p style="font-size:15px;line-height:1.7;margin:0 0 18px;color:#fee2e2;font-weight:600;">' + (customMsg || 'قام مدرّس المساق بإنهاء جلسة الاختبار الخاصة بك.<br>جاري حفظ إجاباتك وتسليم الامتحان بشكل نهائي للنظام...') + '</p>' +
+          '<div style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,0.15);padding:8px 22px;border-radius:999px;font-size:12px;font-weight:700;">' +
+            '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#4ade80;"></span>' +
+            '<span>حالة المحاولة: تسليم إجباري نهائي</span>' +
+          '</div>' +
+        '</div>';
+        document.body.appendChild(overlay);
+      }
+
+      // Block interaction with answers during final submission
+      document.querySelectorAll('input:not([type="hidden"]), textarea, select, button, a').forEach(function(el) {
+        el.style.pointerEvents = 'none';
+      });
+    } catch (e) {}
+
+    // 3. Gracefully submit quiz answers ONCE
+    setTimeout(function() {
+      submitQuizGracefully();
+    }, 600);
+  }
 
   function submitQuizGracefully() {
     try {
       var submitKey = getQuizStorageKey('exammonitor_submitted');
-      if (isSubmittingGracefully || sessionStorage.getItem(submitKey) === '1') {
+      if (isSubmittingGracefully) {
         return;
       }
       isSubmittingGracefully = true;
@@ -951,8 +1002,10 @@ define([], function () {
         } catch (e) {}
       }
 
-      // 2. Lock UI with clear student notification
-      showLockOverlay('انتهى وقت الامتحان المخصص لك — جاري حفظ وإرسال إجاباتك إلى النظام...');
+      // 2. Lock UI with clear student notification (unless terminating overlay is already displayed)
+      if (!isTerminating) {
+        showLockOverlay('انتهى وقت الامتحان المخصص لك — جاري حفظ وإرسال إجاباتك إلى النظام...');
+      }
 
       // 3. Priority 1: Summary page finish form/button if on summary.php
       var summaryBtn = document.querySelector('.btn-finishattempt button, .btn-finishattempt input[type="submit"]') ||
@@ -1010,7 +1063,7 @@ define([], function () {
 
         // Send telemetry event
         handleEvent('attempt_auto_submitted', {
-          reason: 'time_reduced_expired',
+          reason: isTerminating ? 'teacher_terminated' : 'time_reduced_expired',
           timestamp: Date.now()
         });
 
@@ -1085,12 +1138,14 @@ define([], function () {
     try {
       var curPath = window.location.pathname || '';
       var curHref = window.location.href || '';
-      if (curPath.indexOf('review.php') !== -1 || curHref.indexOf('review.php') !== -1 || curPath.indexOf('view.php') !== -1) {
+      var submitKey = getQuizStorageKey('exammonitor_submitted');
+      var termKey = getQuizStorageKey('exammonitor_terminated');
+      if (curPath.indexOf('review.php') !== -1 || curHref.indexOf('review.php') !== -1 || curPath.indexOf('view.php') !== -1 ||
+          sessionStorage.getItem(submitKey) === '1' || sessionStorage.getItem(termKey) === '1') {
         return;
       }
       isExamLocked = true;
       var lockKey = getQuizStorageKey('exammonitor_locked');
-      localStorage.setItem(lockKey, '1');
       sessionStorage.setItem(lockKey, '1');
 
       var msg = customMsg || 'تم إغلاق هذا الامتحان من قبل مدرّس المساق.<br>لا يمكنك تعديل أي إجابة أو استكمال الامتحان.';
@@ -1105,7 +1160,7 @@ define([], function () {
           '<div style="font-size:72px;margin-bottom:20px;">🔒</div>' +
           '<h1 style="font-size:28px;font-weight:900;margin:0 0 16px;letter-spacing:-0.5px;">' + title + '</h1>' +
           '<p style="font-size:17px;line-height:1.7;opacity:0.9;margin:0 0 20px;font-weight:600;">' + msg + '</p>' +
-          '<div style="display:inline-block;background:rgba(0,0,0,0.3);padding:10px 24px;border-radius:30px;font-size:13px;font-weight:700;">حالة المحاولة: مقفلة نهائياً</div>' +
+          '<div style="display:inline-block;background:rgba(0,0,0,0.3);padding:10px 24px;border-radius:30px;font-size:13px;font-weight:700;">حالة المحاولة: مقفلة مؤقتاً</div>' +
           '</div>';
         document.body.appendChild(overlay);
       }
@@ -1359,10 +1414,14 @@ define([], function () {
         }
         if (!data) return;
 
-        // 1. Permanent lock check from server
-        if (data.is_locked) {
+        // 1. Permanent lock check from server (only if attempt is actively ongoing)
+        var submitKey = getQuizStorageKey('exammonitor_submitted');
+        var termKey = getQuizStorageKey('exammonitor_terminated');
+        var isAlreadyFinished = isTerminating || isSubmittingGracefully || sessionStorage.getItem(submitKey) === '1' || sessionStorage.getItem(termKey) === '1';
+
+        if (data.is_locked && !isAlreadyFinished) {
           showLockOverlay();
-        } else {
+        } else if (!data.is_locked) {
           hideLockOverlay();
         }
 
@@ -1370,12 +1429,11 @@ define([], function () {
         if (typeof data.total_reduced_minutes === 'number' && data.total_reduced_minutes > 0) {
           var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
           var targetSec = data.total_reduced_minutes * 60;
-          var curSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+          var curSec = parseInt(sessionStorage.getItem(timerKey) || localStorage.getItem(timerKey) || '0', 10);
           if (curSec < targetSec) {
             var diffMin = Math.round((targetSec - curSec) / 60);
-            localStorage.setItem(timerKey, targetSec);
             sessionStorage.setItem(timerKey, targetSec);
-            showToast('⚠ تم تقليص وقت الامتحان بـ ' + (diffMin > 0 ? diffMin : data.total_reduced_minutes) + ' دقائق من قِبل المدرّس');
+            showToast('⚠ تم تقليص وقت الامتحان بـ ' + (diffMin > 0 ? diffMin : data.total_reduced_minutes) + ' دقائق من قِبل المدرّس', true);
             applyReducedTime();
           }
         }
@@ -1398,6 +1456,30 @@ define([], function () {
             showMessageOverlay(action.message || 'رسالة من المدرّس');
             acknowledgeAction(action.id);
             handleEvent('teacher_action_received', { action_type: 'send_message', action_id: action.id });
+          } else if (action.action === 'block_copy') {
+            enforce.copy = true;
+            acknowledgeAction(action.id);
+            showToast('⚠️ قام المدرس بتفعيل منع النسخ لهذا الامتحان', true);
+            handleEvent('teacher_action_received', { action_type: 'block_copy', action_id: action.id });
+          } else if (action.action === 'allow_copy') {
+            enforce.copy = false;
+            acknowledgeAction(action.id);
+            showToast('ℹ️ قام المدرس بالسماح بالنسخ في الامتحان', true);
+            handleEvent('teacher_action_received', { action_type: 'allow_copy', action_id: action.id });
+          } else if (action.action === 'block_paste') {
+            enforce.paste = true;
+            acknowledgeAction(action.id);
+            showToast('⚠️ قام المدرس بتفعيل منع اللصق لهذا الامتحان', true);
+            handleEvent('teacher_action_received', { action_type: 'block_paste', action_id: action.id });
+          } else if (action.action === 'allow_paste') {
+            enforce.paste = false;
+            acknowledgeAction(action.id);
+            showToast('ℹ️ قام المدرس بالسماح باللصق في الامتحان', true);
+            handleEvent('teacher_action_received', { action_type: 'allow_paste', action_id: action.id });
+          } else if (action.action === 'terminate_session') {
+            acknowledgeAction(action.id);
+            handleEvent('teacher_action_received', { action_type: 'terminate_session', action_id: action.id });
+            terminateAndSubmitQuiz(action.message);
           } else if (action.action === 'lock_exam') {
             showLockOverlay();
             acknowledgeAction(action.id);
@@ -1409,11 +1491,10 @@ define([], function () {
           } else if (action.action === 'reduce_time') {
             var min = parseInt(action.minutes, 10) || 5;
             var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
-            var curSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+            var curSec = parseInt(sessionStorage.getItem(timerKey) || '0', 10);
             var newSec = Math.max(curSec, min * 60);
-            localStorage.setItem(timerKey, newSec);
             sessionStorage.setItem(timerKey, newSec);
-            showToast('⚠ تم تقليص وقت الامتحان بـ ' + min + ' دقائق من قِبل المدرّس');
+            showToast('⚠ تم تقليص وقت الامتحان بـ ' + min + ' دقائق من قِبل المدرّس', true);
             acknowledgeAction(action.id);
             handleEvent('teacher_action_received', { action_type: 'reduce_time', action_id: action.id, minutes: min });
             applyReducedTime();
@@ -1442,34 +1523,47 @@ define([], function () {
       pluginSecret = (moodleContext.settings && moodleContext.settings.sync_secret) || '';
       sessionId = getSessionId();
 
-      // 1. Safety check: Never run monitoring, timers or lock overlay on review.php or view.php
+      // 1. Safety check: Never run monitoring, timers or lock overlay on review.php, view.php, summary.php (completed), or finished attempt
       var curPath = window.location.pathname || '';
       var curSearch = window.location.search || '';
       var curHref = window.location.href || '';
-      var isReviewOrView = curPath.indexOf('review.php') !== -1 ||
-                           curSearch.indexOf('review.php') !== -1 ||
-                           curHref.indexOf('review.php') !== -1 ||
-                           curPath.indexOf('view.php') !== -1 ||
-                           (typeof M !== 'undefined' && M.cfg && (M.cfg.pageType === 'mod-quiz-review' || M.cfg.pageType === 'mod-quiz-view'));
 
-      if (isReviewOrView) {
-        // Attempt is complete. Clean up any stored lock or submitted flags so student can review peacefully
+      var submitKey = getQuizStorageKey('exammonitor_submitted');
+      var termKey = getQuizStorageKey('exammonitor_terminated');
+      var lockKey = getQuizStorageKey('exammonitor_locked');
+      var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
+
+      var isFinishedOrReview = curPath.indexOf('review.php') !== -1 ||
+                               curSearch.indexOf('review.php') !== -1 ||
+                               curHref.indexOf('review.php') !== -1 ||
+                               curPath.indexOf('view.php') !== -1 ||
+                               curSearch.indexOf('view.php') !== -1 ||
+                               (typeof M !== 'undefined' && M.cfg && (M.cfg.pageType === 'mod-quiz-review' || M.cfg.pageType === 'mod-quiz-view'));
+
+      var isContextFinished = Boolean(moodleContext.quiz && (moodleContext.quiz.state === 'finished' || moodleContext.quiz.state === 'abandoned'));
+      var isSubmittedOrTerminated = (sessionStorage.getItem(submitKey) === '1' || sessionStorage.getItem(termKey) === '1');
+      var isSummaryComplete = curPath.indexOf('summary.php') !== -1 && (isSubmittedOrTerminated || document.getElementById('responseform') === null);
+
+      if (isFinishedOrReview || isContextFinished || isSummaryComplete) {
+        // Attempt is finished. Clean up all stored locks and timers so student sees Moodle screen peacefully
         try {
-          var sKey = getQuizStorageKey('exammonitor_submitted');
-          var lKey = getQuizStorageKey('exammonitor_locked');
-          var rKey = getQuizStorageKey('exammonitor_reduced_sec');
-          sessionStorage.removeItem(sKey);
-          sessionStorage.removeItem(lKey);
-          localStorage.removeItem(lKey);
-          sessionStorage.removeItem(rKey);
-          localStorage.removeItem(rKey);
+          sessionStorage.removeItem(submitKey);
+          sessionStorage.removeItem(termKey);
+          sessionStorage.removeItem(lockKey);
+          localStorage.removeItem(lockKey);
+          sessionStorage.removeItem(timerKey);
+          localStorage.removeItem(timerKey);
           var existingOverlay = document.getElementById('exammonitor-locked');
           if (existingOverlay && existingOverlay.parentNode) {
             existingOverlay.parentNode.removeChild(existingOverlay);
           }
+          var existingTerm = document.getElementById('exammonitor-terminated');
+          if (existingTerm && existingTerm.parentNode) {
+            existingTerm.parentNode.removeChild(existingTerm);
+          }
         } catch (e) {}
-        console.log('ℹ [ExamMonitor] Review/view page detected. Monitoring deactivated.');
-        return;
+        console.log('ℹ [ExamMonitor] Attempt finished/submitted. Monitoring completely deactivated.');
+        return; // HALT IMMEDIATELY! NO REDIRECTS, NO OVERLAYS, NO REFRESH LOOPS!
       }
 
       console.log('🚀 [ExamMonitor Initialized]', {
@@ -1478,35 +1572,8 @@ define([], function () {
         server: serverUrl
       });
 
-      // Immediate check if attempt was already completed/submitted in this session
-      var submitKey = getQuizStorageKey('exammonitor_submitted');
-      if (sessionStorage.getItem(submitKey) === '1') {
-        var attemptId = parseInt((moodleContext.quiz && moodleContext.quiz.attempt_id) || 0, 10);
-        var cmid = parseInt((moodleContext.quiz && moodleContext.quiz.cmid) || 0, 10);
-        var site = (moodleContext.site_url || '').replace(/\/+$/, '');
-
-        // Only redirect if on attempt.php and NOT already on review or view
-        if (curHref.indexOf('review.php') === -1 && curHref.indexOf('view.php') === -1) {
-          sessionStorage.removeItem(submitKey);
-          if (attemptId > 0) {
-            var targetReviewUrl = site + '/mod/quiz/review.php?attempt=' + encodeURIComponent(attemptId);
-            showLockOverlay('انتهى وقت الامتحان وتم تسليم إجاباتك بنجاح.');
-            setTimeout(function() {
-              window.location.replace(targetReviewUrl);
-            }, 800);
-          } else if (cmid > 0) {
-            var targetViewUrl = site + '/mod/quiz/view.php?id=' + encodeURIComponent(cmid);
-            setTimeout(function() {
-              window.location.replace(targetViewUrl);
-            }, 800);
-          }
-        }
-        return;
-      }
-
-      // Immediate check for persistent lock
-      var lockKey = getQuizStorageKey('exammonitor_locked');
-      if (localStorage.getItem(lockKey) === '1' || sessionStorage.getItem(lockKey) === '1') {
+      // Immediate check for session lock
+      if (sessionStorage.getItem(lockKey) === '1') {
         showLockOverlay();
       }
 
