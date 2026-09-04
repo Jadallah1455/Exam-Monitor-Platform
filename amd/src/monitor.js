@@ -447,7 +447,22 @@ define([], function () {
   // =====================================================
   // Question / Answer info
   // =====================================================
-  function getQuestionContainer(element) { return element.closest('.que'); }
+  function getQuestionContainer(element) {
+    if (!element) return null;
+    var qc = (typeof element.closest === 'function') ? element.closest('.que') : null;
+    if (!qc && element.ownerDocument && element.ownerDocument !== document) {
+      try {
+        var iframes = document.querySelectorAll('iframe');
+        for (var k = 0; k < iframes.length; k++) {
+          if (iframes[k].contentDocument === element.ownerDocument || iframes[k].contentWindow === element.ownerDocument.defaultView) {
+            qc = iframes[k].closest('.que');
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+    return qc;
+  }
 
   function getQuestionInfo(element) {
     var qc = getQuestionContainer(element);
@@ -462,11 +477,11 @@ define([], function () {
   }
 
   function getAnswerInfo(element) {
-    var tag = element.tagName.toLowerCase();
+    var tag = element.tagName ? element.tagName.toLowerCase() : '';
     var type = element.type || tag;
     var vi = {};
     if (type === 'password') {
-      vi = { has_value: Boolean(element.value), value_length: element.value.length };
+      vi = { has_value: Boolean(element.value), value_length: element.value ? element.value.length : 0 };
     } else if (tag === 'textarea' || type === 'text') {
       var tv = element.value || '';
       vi = {
@@ -475,6 +490,15 @@ define([], function () {
         word_count: tv.trim() ? tv.trim().split(/\s+/).length : 0,
         answer_text: tv,
         answer_value: tv,
+      };
+    } else if (element.isContentEditable || element.classList?.contains('editor_atto_content')) {
+      var cv = element.innerText || element.textContent || '';
+      vi = {
+        has_value: cv.length > 0,
+        value_length: cv.length,
+        word_count: cv.trim() ? cv.trim().split(/\s+/).length : 0,
+        answer_text: cv,
+        answer_value: cv,
       };
     } else if (type === 'radio' || type === 'checkbox') {
       var labelEl = element.closest('label') || (element.id ? document.querySelector('label[for="' + element.id + '"]') : null) || element.parentElement;
@@ -521,41 +545,62 @@ define([], function () {
       }
     });
 
-    document.addEventListener('copy', function (event) {
+    function onCopyHandler(event) {
       var sel = window.getSelection();
       var selStr = sel ? sel.toString() : '';
       var selLen = selStr.length;
-      var activeEl = document.activeElement;
+      var activeEl = event.target || document.activeElement;
       var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
       handleEvent('copy', {
         action: enforce.copy ? 'copy_blocked' : 'copy_detected',
         selection_length: selLen,
-        selection_text: selLen > 0 ? selStr.substring(0, 500) : '',
+        selection_text: selLen > 0 ? selStr.substring(0, 1000) : '',
         question: qInfo,
         question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
       });
       if (enforce.copy) { event.preventDefault(); showToast('النسخ غير مسموح خلال هذا الامتحان'); }
       resetIdle();
-    });
+    }
 
-    document.addEventListener('paste', function (event) {
+    function onPasteHandler(event) {
       var pastedText = '';
       try {
         if (event.clipboardData) pastedText = event.clipboardData.getData('text') || '';
         else if (window.clipboardData) pastedText = window.clipboardData.getData('text') || '';
       } catch (e) {}
-      var activeEl = document.activeElement;
+      var activeEl = event.target || document.activeElement;
       var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
       handleEvent('paste', {
         action: enforce.paste ? 'paste_blocked' : 'paste_detected',
-        pasted_text: pastedText ? pastedText.substring(0, 500) : '',
+        pasted_text: pastedText ? pastedText.substring(0, 3000) : '',
         pasted_length: pastedText ? pastedText.length : 0,
         question: qInfo,
         question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
       });
       if (enforce.paste) { event.preventDefault(); showToast('اللصق غير مسموح خلال هذا الامتحان'); }
       resetIdle();
-    });
+    }
+
+    function onCutHandler(event) {
+      var sel = window.getSelection();
+      var selStr = sel ? sel.toString() : '';
+      var activeEl = event.target || document.activeElement;
+      var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
+      handleEvent('cut', {
+        action: enforce.copy ? 'cut_blocked' : 'cut_detected',
+        selection_length: selStr.length,
+        selection_text: selStr.length > 0 ? selStr.substring(0, 1000) : '',
+        question: qInfo,
+        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
+      });
+      if (enforce.copy) event.preventDefault();
+      resetIdle();
+    }
+
+    // Capture phase listeners on document (catches events before any rich editor swallows them)
+    document.addEventListener('copy', onCopyHandler, true);
+    document.addEventListener('paste', onPasteHandler, true);
+    document.addEventListener('cut', onCutHandler, true);
 
     document.addEventListener('contextmenu', function (event) {
       handleEvent('right_click', { action: enforce.rightclick ? 'context_menu_blocked' : 'context_menu_opened' });
@@ -563,21 +608,25 @@ define([], function () {
       resetIdle();
     });
 
-    document.addEventListener('cut', function (event) {
-      var sel = window.getSelection();
-      var selStr = sel ? sel.toString() : '';
-      var activeEl = document.activeElement;
-      var qInfo = activeEl ? getQuestionInfo(activeEl) : { question_dom_id: null, question_number: null, question_type: null };
-      handleEvent('cut', {
-        action: enforce.copy ? 'cut_blocked' : 'cut_detected',
-        selection_length: selStr.length,
-        selection_text: selStr.length > 0 ? selStr.substring(0, 500) : '',
-        question: qInfo,
-        question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
-      });
-      if (enforce.copy) event.preventDefault();
-      resetIdle();
-    });
+    // Also attach to rich editor iframes (TinyMCE) and observe DOM changes
+    function attachToEditorIframes() {
+      try {
+        var iframes = document.querySelectorAll('iframe');
+        iframes.forEach(function (ifr) {
+          try {
+            var doc = ifr.contentDocument || ifr.contentWindow?.document;
+            if (doc && !doc._em_attached) {
+              doc._em_attached = true;
+              doc.addEventListener('paste', onPasteHandler, true);
+              doc.addEventListener('copy', onCopyHandler, true);
+              doc.addEventListener('cut', onCutHandler, true);
+            }
+          } catch (err) {}
+        });
+      } catch (err) {}
+    }
+    attachToEditorIframes();
+    setInterval(attachToEditorIframes, 3000);
 
     // Track typing for counters
     document.addEventListener('keydown', function (event) {
@@ -718,7 +767,10 @@ define([], function () {
       try {
         var evt = e || window.event;
         var element = (evt && evt.target) ? evt.target : null;
-        if (!element || typeof element.matches !== 'function' || !element.matches('textarea, input[type="text"]')) return;
+        if (!element) return;
+        var isTextInput = (typeof element.matches === 'function' && element.matches('textarea, input[type="text"]'));
+        var isContentEditable = element.isContentEditable || (element.classList && element.classList.contains('editor_atto_content'));
+        if (!isTextInput && !isContentEditable) return;
 
         var targetEl = element;
         if (essayDebounceTimer) clearTimeout(essayDebounceTimer);
@@ -727,15 +779,16 @@ define([], function () {
             if (!targetEl) return;
             var qInfo = getQuestionInfo(targetEl);
             var aInfo = getAnswerInfo(targetEl);
+            var ansText = targetEl.value || targetEl.innerText || targetEl.textContent || '';
             handleEvent('answer_changed', {
               question: qInfo,
               answer: aInfo,
               question_id: qInfo.question_dom_id || qInfo.question_number || 'q',
               question_type: qInfo.question_type || 'essay',
-              answer_text: targetEl.value || '',
+              answer_text: ansText,
             });
           } catch (err) {}
-        }, 1500);
+        }, 1200);
       } catch (err) {}
     }, true);
   }
