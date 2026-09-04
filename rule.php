@@ -181,7 +181,30 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
         $course = $this->quizobj->get_course();
         $cm = $this->quizobj->get_cm();
 
+        // 1. NEVER monitor or inject overlay on review, view, or post-submission pages
+        $pageUrl = ($PAGE->url instanceof \moodle_url) ? $PAGE->url->get_path() : ($_SERVER['REQUEST_URI'] ?? '');
+        if (strpos($pageUrl, 'review.php') !== false || strpos($pageUrl, 'view.php') !== false) {
+            return;
+        }
+        if (isset($PAGE->pagetype) && in_array($PAGE->pagetype, ['mod-quiz-review', 'mod-quiz-view'], true)) {
+            return;
+        }
+
         $attemptid = optional_param('attempt', 0, PARAM_INT);
+        if ($attemptid > 0) {
+            $attemptState = $DB->get_field('quiz_attempts', 'state', ['id' => $attemptid]);
+            if ($attemptState === 'finished' || $attemptState === 'abandoned') {
+                return;
+            }
+        }
+
+        // Teachers/managers reviewing student attempts should not be monitored as students
+        if ($cm && !empty($cm->id)) {
+            $context = \context_module::instance($cm->id);
+            if (has_capability('mod/quiz:viewreports', $context) || has_capability('moodle/grade:viewall', $context)) {
+                return;
+            }
+        }
 
         // Load the per-quiz settings (defaults mirror get_extra_settings()).
         $settings = self::get_extra_settings($quiz->id);

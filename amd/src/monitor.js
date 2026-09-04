@@ -1030,6 +1030,11 @@ define([], function () {
 
   function showLockOverlay(customMsg) {
     try {
+      var curPath = window.location.pathname || '';
+      var curHref = window.location.href || '';
+      if (curPath.indexOf('review.php') !== -1 || curHref.indexOf('review.php') !== -1 || curPath.indexOf('view.php') !== -1) {
+        return;
+      }
       isExamLocked = true;
       var lockKey = getQuizStorageKey('exammonitor_locked');
       localStorage.setItem(lockKey, '1');
@@ -1384,6 +1389,36 @@ define([], function () {
       pluginSecret = (moodleContext.settings && moodleContext.settings.sync_secret) || '';
       sessionId = getSessionId();
 
+      // 1. Safety check: Never run monitoring, timers or lock overlay on review.php or view.php
+      var curPath = window.location.pathname || '';
+      var curSearch = window.location.search || '';
+      var curHref = window.location.href || '';
+      var isReviewOrView = curPath.indexOf('review.php') !== -1 ||
+                           curSearch.indexOf('review.php') !== -1 ||
+                           curHref.indexOf('review.php') !== -1 ||
+                           curPath.indexOf('view.php') !== -1 ||
+                           (typeof M !== 'undefined' && M.cfg && (M.cfg.pageType === 'mod-quiz-review' || M.cfg.pageType === 'mod-quiz-view'));
+
+      if (isReviewOrView) {
+        // Attempt is complete. Clean up any stored lock or submitted flags so student can review peacefully
+        try {
+          var sKey = getQuizStorageKey('exammonitor_submitted');
+          var lKey = getQuizStorageKey('exammonitor_locked');
+          var rKey = getQuizStorageKey('exammonitor_reduced_sec');
+          sessionStorage.removeItem(sKey);
+          sessionStorage.removeItem(lKey);
+          localStorage.removeItem(lKey);
+          sessionStorage.removeItem(rKey);
+          localStorage.removeItem(rKey);
+          var existingOverlay = document.getElementById('exammonitor-locked');
+          if (existingOverlay && existingOverlay.parentNode) {
+            existingOverlay.parentNode.removeChild(existingOverlay);
+          }
+        } catch (e) {}
+        console.log('ℹ [ExamMonitor] Review/view page detected. Monitoring deactivated.');
+        return;
+      }
+
       console.log('🚀 [ExamMonitor Initialized]', {
         student: moodleContext.student,
         quiz: moodleContext.quiz,
@@ -1393,12 +1428,17 @@ define([], function () {
       // Immediate check if attempt was already completed/submitted in this session
       var submitKey = getQuizStorageKey('exammonitor_submitted');
       if (sessionStorage.getItem(submitKey) === '1') {
-        showLockOverlay('انتهى وقت الامتحان وتم تسليم إجاباتك بنجاح.');
         if (moodleContext.quiz && moodleContext.quiz.attempt_id) {
           var site = (moodleContext.site_url || '').replace(/\/+$/, '');
-          setTimeout(function() {
-            window.location.href = site + '/mod/quiz/review.php?attempt=' + encodeURIComponent(moodleContext.quiz.attempt_id);
-          }, 800);
+          var targetReviewUrl = site + '/mod/quiz/review.php?attempt=' + encodeURIComponent(moodleContext.quiz.attempt_id);
+          // Only redirect if on attempt.php and NOT already on review or view
+          if (curHref.indexOf('review.php') === -1 && curHref.indexOf('view.php') === -1) {
+            showLockOverlay('انتهى وقت الامتحان وتم تسليم إجاباتك بنجاح.');
+            sessionStorage.removeItem(submitKey);
+            setTimeout(function() {
+              window.location.replace(targetReviewUrl);
+            }, 800);
+          }
         }
         return;
       }
