@@ -235,6 +235,7 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
                 'course_id' => (int) $course->id,
                 'cmid' => (int) $cm->id
             ],
+            'sesskey' => sesskey(),
             'settings' => [
                 'debug' => true,
                 'send_enabled' => true,

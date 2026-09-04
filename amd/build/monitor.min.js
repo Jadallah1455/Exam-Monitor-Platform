@@ -880,22 +880,151 @@ define([], function () {
     } catch (e) {}
   }
 
+  var isSubmittingGracefully = false;
+
   function submitQuizGracefully() {
     try {
-      if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer && typeof M.mod_quiz.timer.endtime === 'function') {
-        M.mod_quiz.timer.endtime();
+      var submitKey = getQuizStorageKey('exammonitor_submitted');
+      if (isSubmittingGracefully || sessionStorage.getItem(submitKey) === '1') {
         return;
       }
-      var form = document.getElementById('responseform') || document.querySelector('form.mform') || document.querySelector('form[action*="processattempt"]');
-      if (form && !form._emSubmitted) {
-        form._emSubmitted = true;
+      isSubmittingGracefully = true;
+      sessionStorage.setItem(submitKey, '1');
+
+      // 1. Stop Moodle native timer
+      if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer && typeof M.mod_quiz.timer.stop === 'function') {
+        try {
+          M.mod_quiz.timer.stop(null);
+        } catch (e) {}
+      }
+
+      // 2. Lock UI with clear student notification
+      showLockOverlay('انتهى وقت الامتحان المخصص لك — جاري حفظ وإرسال إجاباتك إلى النظام...');
+
+      // 3. Priority 1: Summary page finish form/button if on summary.php
+      var summaryBtn = document.querySelector('.btn-finishattempt button, .btn-finishattempt input[type="submit"]') ||
+                       document.querySelector('#frm-finishattempt input[type="submit"]');
+      if (summaryBtn) {
+        summaryBtn.click();
+        return;
+      }
+      var summaryForm = document.getElementById('frm-finishattempt') || document.querySelector('form.btn-finishattempt');
+      if (summaryForm) {
+        summaryForm.submit();
+        return;
+      }
+
+      // 4. Priority 2: Standard attempt question response form
+      var form = document.getElementById('responseform') ||
+                 document.querySelector('form.mform') ||
+                 document.querySelector('form[action*="processattempt"]');
+
+      if (form) {
+        // Ensure all inputs are enabled so student's answers are included in POST
         form.querySelectorAll('input, select, textarea').forEach(function(el) {
           el.disabled = false;
         });
-        var timeup = form.querySelector('input[name="timeup"]');
-        if (timeup) timeup.value = '1';
-        form.submit();
+
+        // Set or inject finishattempt = 1 (CRITICAL: tells Moodle server this attempt is finished)
+        var finishInput = form.querySelector('input[name="finishattempt"]');
+        if (!finishInput) {
+          finishInput = document.createElement('input');
+          finishInput.type = 'hidden';
+          finishInput.name = 'finishattempt';
+          form.appendChild(finishInput);
+        }
+        finishInput.value = '1';
+
+        // Set or inject timeup = 1
+        var timeupInput = form.querySelector('input[name="timeup"]');
+        if (!timeupInput) {
+          timeupInput = document.createElement('input');
+          timeupInput.type = 'hidden';
+          timeupInput.name = 'timeup';
+          form.appendChild(timeupInput);
+        }
+        timeupInput.value = '1';
+
+        // Bypass Moodle FormChangeChecker dialogs
+        try {
+          if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer && M.mod_quiz.timer.FormChangeChecker) {
+            M.mod_quiz.timer.FormChangeChecker.markFormSubmitted(timeupInput);
+          }
+          if (typeof M !== 'undefined' && M.core_formchangechecker) {
+            M.core_formchangechecker.set_form_submitted();
+          }
+        } catch (fcErr) {}
+
+        // Send telemetry event
+        handleEvent('attempt_auto_submitted', {
+          reason: 'time_reduced_expired',
+          timestamp: Date.now()
+        });
+
+        // Submit form
+        setTimeout(function() {
+          try {
+            HTMLFormElement.prototype.submit.call(form);
+          } catch (sErr) {
+            form.submit();
+          }
+        }, 400);
+        return;
       }
+
+      // 5. Fallback redirect directly to processattempt.php
+      if (moodleContext.quiz && moodleContext.quiz.attempt_id) {
+        var sesskeyVal = moodleContext.sesskey || (document.querySelector('input[name="sesskey"]') ? document.querySelector('input[name="sesskey"]').value : '');
+        var pUrl = (moodleContext.site_url || '').replace(/\/+$/, '') + '/mod/quiz/processattempt.php?attempt=' +
+          encodeURIComponent(moodleContext.quiz.attempt_id) + '&finishattempt=1&timeup=1&sesskey=' +
+          encodeURIComponent(sesskeyVal);
+        window.location.href = pUrl;
+      }
+    } catch (e) {
+      console.error('[ExamMonitor] submitQuizGracefully error:', e);
+    }
+  }
+
+  function hookResponseForm() {
+    try {
+      var form = document.getElementById('responseform') || document.querySelector('form[action*="processattempt"]');
+      if (!form || form._emHooked) return;
+      form._emHooked = true;
+
+      var enforceFinishOnTimeout = function() {
+        var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
+        var rSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+        var timeupInput = form.querySelector('input[name="timeup"]');
+        var isTimeUp = (timeupInput && String(timeupInput.value) === '1');
+
+        if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer && typeof M.mod_quiz.timer.endtime === 'number') {
+          if (M.mod_quiz.timer.endtime - new Date().getTime() <= 0) {
+            isTimeUp = true;
+          }
+        }
+
+        if (isTimeUp || rSec > 0) {
+          var finishInput = form.querySelector('input[name="finishattempt"]');
+          if (!finishInput) {
+            finishInput = document.createElement('input');
+            finishInput.type = 'hidden';
+            finishInput.name = 'finishattempt';
+            form.appendChild(finishInput);
+          }
+          if (isTimeUp) {
+            finishInput.value = '1';
+            if (timeupInput) timeupInput.value = '1';
+          }
+        }
+      };
+
+      form.addEventListener('submit', enforceFinishOnTimeout, true);
+
+      var origSubmit = form.submit;
+      form.submit = function() {
+        enforceFinishOnTimeout();
+        return origSubmit.apply(this, arguments);
+      };
     } catch (e) {}
   }
 
@@ -951,60 +1080,150 @@ define([], function () {
     try {
       var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
       var totalReducedSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
-      if (totalReducedSec <= 0) return;
 
-      var deltaSec = totalReducedSec - lastAppliedReducedSec;
-      if (deltaSec <= 0) return;
-      lastAppliedReducedSec = totalReducedSec;
+      // Make sure response form is hooked
+      hookResponseForm();
 
-      // 1. If Moodle YUI / JS timer object exists, modify it smoothly by delta
+      // Check if attempt was already submitted
+      var submitKey = getQuizStorageKey('exammonitor_submitted');
+      if (sessionStorage.getItem(submitKey) === '1') {
+        return;
+      }
+
+      // 1. Hook into Moodle YUI / JS native timer object if available
       if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer) {
-        if (typeof M.mod_quiz.timer.seconds === 'number') {
-          M.mod_quiz.timer.seconds = Math.max(0, M.mod_quiz.timer.seconds - deltaSec);
+        var timerObj = M.mod_quiz.timer;
+
+        // Capture base endtime once (in milliseconds)
+        if (typeof timerObj.endtime === 'number' && timerObj.endtime > 0) {
+          if (!timerObj._baseEndtime) {
+            timerObj._baseEndtime = timerObj.endtime;
+          }
         }
-        if (typeof M.mod_quiz.timer.endtime === 'number') {
-          M.mod_quiz.timer.endtime -= deltaSec;
+
+        // Wrap update method if not already wrapped
+        if (typeof timerObj.update === 'function' && !timerObj._emWrappedUpdate) {
+          timerObj._emWrappedUpdate = true;
+          var origMoodleUpdate = timerObj.update;
+
+          timerObj.update = function() {
+            var curTimerKey = getQuizStorageKey('exammonitor_reduced_sec');
+            var rSec = parseInt(localStorage.getItem(curTimerKey) || '0', 10);
+            if (rSec > 0 && timerObj._baseEndtime) {
+              timerObj.endtime = timerObj._baseEndtime - (rSec * 1000);
+            }
+
+            var secRemaining = Math.floor((timerObj.endtime - new Date().getTime()) / 1000);
+            if (secRemaining < 0) {
+              // Time has expired!
+              if (typeof timerObj.stop === 'function') {
+                try { timerObj.stop(null); } catch (e) {}
+              }
+              var elTime = document.getElementById('quiz-time-left');
+              if (elTime) {
+                elTime.textContent = '00:00 (انتهى الوقت)';
+              }
+              submitQuizGracefully();
+              return;
+            }
+
+            return origMoodleUpdate.apply(this, arguments);
+          };
+        }
+
+        // Wrap updateEndTime if present
+        if (typeof timerObj.updateEndTime === 'function' && !timerObj._emWrappedUpdateEndTime) {
+          timerObj._emWrappedUpdateEndTime = true;
+          var origMoodleUpdateEndTime = timerObj.updateEndTime;
+          timerObj.updateEndTime = function(timeleft) {
+            origMoodleUpdateEndTime.apply(this, arguments);
+            timerObj._baseEndtime = timerObj.endtime;
+            var curTimerKey = getQuizStorageKey('exammonitor_reduced_sec');
+            var rSec = parseInt(localStorage.getItem(curTimerKey) || '0', 10);
+            if (rSec > 0) {
+              timerObj.endtime = timerObj._baseEndtime - (rSec * 1000);
+            }
+          };
+        }
+
+        // Apply reduction to Moodle timer
+        if (totalReducedSec > 0 && timerObj._baseEndtime) {
+          timerObj.endtime = timerObj._baseEndtime - (totalReducedSec * 1000);
+          var currentSecLeft = Math.floor((timerObj.endtime - new Date().getTime()) / 1000);
+          if (currentSecLeft < 0) {
+            var elTime2 = document.getElementById('quiz-time-left');
+            if (elTime2) {
+              elTime2.textContent = '00:00 (انتهى الوقت)';
+            }
+            submitQuizGracefully();
+            return;
+          } else if (typeof timerObj.update === 'function') {
+            timerObj.update();
+          }
         }
       }
 
-      // 2. Intercept visible timer DOM elements
+      // 2. Intercept visible timer DOM elements (always or as fallback)
       var timerEls = document.querySelectorAll('#quiz-timer, #timerobject, .mod_quiz-timer, #quiz-time-left, [data-timer]');
-      timerEls.forEach(function(el) {
-        var text = el.innerText || el.textContent || '';
-        var match = text.match(/(\d+):(\d+)(?::(\d+))?/);
-        if (match) {
-          var h = 0, m = 0, s = 0;
-          if (match[3] !== undefined) {
-            h = parseInt(match[1], 10);
-            m = parseInt(match[2], 10);
-            s = parseInt(match[3], 10);
-          } else {
-            m = parseInt(match[1], 10);
-            s = parseInt(match[2], 10);
+      if (totalReducedSec > 0 && timerEls.length > 0) {
+        timerEls.forEach(function(el) {
+          // If Moodle timer already handles it and it's not timed out, let Moodle render
+          if (typeof M !== 'undefined' && M.mod_quiz && M.mod_quiz.timer && M.mod_quiz.timer._emWrappedUpdate) {
+            var mSec = Math.floor((M.mod_quiz.timer.endtime - new Date().getTime()) / 1000);
+            if (mSec < 0) {
+              el.textContent = '00:00 (انتهى الوقت)';
+              submitQuizGracefully();
+            }
+            return;
           }
-          var currentRemaining = h * 3600 + m * 60 + s;
-          var adjusted = Math.max(0, currentRemaining - deltaSec);
-          if (adjusted <= 0) {
-            el.textContent = '00:00 (انتهى الوقت)';
-            showToast('انتهى الوقت المخصص للإجابة — جاري حفظ وإرسال إجاباتك...');
-            setTimeout(submitQuizGracefully, 1500);
-          } else {
-            var newH = Math.floor(adjusted / 3600);
-            var newM = Math.floor((adjusted % 3600) / 60);
-            var newS = adjusted % 60;
-            var formatted = (newH > 0 ? (newH + ':') : '') +
-              (newM < 10 ? '0' : '') + newM + ':' +
-              (newS < 10 ? '0' : '') + newS;
-            el.textContent = (text.indexOf('الوقت') !== -1 ? 'الوقت المتبقي: ' : (text.indexOf('Time') !== -1 ? 'Time left: ' : '')) + formatted;
+
+          // Fallback DOM calculation if Moodle timer is absent
+          if (typeof el._emBaseSec !== 'number') {
+            var text = el.innerText || el.textContent || '';
+            var match = text.match(/(\d+):(\d+)(?::(\d+))?/);
+            if (match) {
+              var h = 0, m = 0, s = 0;
+              if (match[3] !== undefined) {
+                h = parseInt(match[1], 10);
+                m = parseInt(match[2], 10);
+                s = parseInt(match[3], 10);
+              } else {
+                m = parseInt(match[1], 10);
+                s = parseInt(match[2], 10);
+              }
+              el._emBaseSec = h * 3600 + m * 60 + s;
+              el._emCapturedAt = Date.now();
+            }
           }
-        }
-      });
-    } catch (e) {}
+
+          if (typeof el._emBaseSec === 'number') {
+            var elapsed = Math.floor((Date.now() - el._emCapturedAt) / 1000);
+            var remaining = Math.max(0, el._emBaseSec - elapsed - totalReducedSec);
+            if (remaining <= 0) {
+              el.textContent = '00:00 (انتهى الوقت)';
+              submitQuizGracefully();
+            } else {
+              var newH = Math.floor(remaining / 3600);
+              var newM = Math.floor((remaining % 3600) / 60);
+              var newS = remaining % 60;
+              var formatted = (newH > 0 ? (newH + ':') : '') +
+                (newM < 10 ? '0' : '') + newM + ':' +
+                (newS < 10 ? '0' : '') + newS;
+              var prefix = (el.textContent.indexOf('الوقت') !== -1 ? 'الوقت المتبقي: ' : (el.textContent.indexOf('Time') !== -1 ? 'Time left: ' : ''));
+              el.textContent = prefix + formatted;
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('[ExamMonitor] applyReducedTime error:', e);
+    }
   }
 
   function startTimerManager() {
     if (timerManagerInterval) return;
-    timerManagerInterval = setInterval(applyReducedTime, 1000);
+    applyReducedTime();
+    timerManagerInterval = setInterval(applyReducedTime, 500);
   }
 
   function getApiUrl(subpath) {
@@ -1095,8 +1314,10 @@ define([], function () {
           var targetSec = data.total_reduced_minutes * 60;
           var curSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
           if (curSec < targetSec) {
+            var diffMin = Math.round((targetSec - curSec) / 60);
             localStorage.setItem(timerKey, targetSec);
             sessionStorage.setItem(timerKey, targetSec);
+            showToast('⚠ تم تقليص وقت الامتحان بـ ' + (diffMin > 0 ? diffMin : data.total_reduced_minutes) + ' دقائق من قِبل المدرّس');
             applyReducedTime();
           }
         }
@@ -1129,9 +1350,15 @@ define([], function () {
             handleEvent('teacher_action_received', { action_type: 'unlock_exam', action_id: action.id });
           } else if (action.action === 'reduce_time') {
             var min = parseInt(action.minutes, 10) || 5;
+            var timerKey = getQuizStorageKey('exammonitor_reduced_sec');
+            var curSec = parseInt(localStorage.getItem(timerKey) || '0', 10);
+            var newSec = Math.max(curSec, min * 60);
+            localStorage.setItem(timerKey, newSec);
+            sessionStorage.setItem(timerKey, newSec);
             showToast('⚠ تم تقليص وقت الامتحان بـ ' + min + ' دقائق من قِبل المدرّس');
             acknowledgeAction(action.id);
             handleEvent('teacher_action_received', { action_type: 'reduce_time', action_id: action.id, minutes: min });
+            applyReducedTime();
           }
         });
       })
@@ -1163,11 +1390,26 @@ define([], function () {
         server: serverUrl
       });
 
+      // Immediate check if attempt was already completed/submitted in this session
+      var submitKey = getQuizStorageKey('exammonitor_submitted');
+      if (sessionStorage.getItem(submitKey) === '1') {
+        showLockOverlay('انتهى وقت الامتحان وتم تسليم إجاباتك بنجاح.');
+        if (moodleContext.quiz && moodleContext.quiz.attempt_id) {
+          var site = (moodleContext.site_url || '').replace(/\/+$/, '');
+          setTimeout(function() {
+            window.location.href = site + '/mod/quiz/review.php?attempt=' + encodeURIComponent(moodleContext.quiz.attempt_id);
+          }, 800);
+        }
+        return;
+      }
+
       // Immediate check for persistent lock
       var lockKey = getQuizStorageKey('exammonitor_locked');
       if (localStorage.getItem(lockKey) === '1' || sessionStorage.getItem(lockKey) === '1') {
         showLockOverlay();
       }
+
+      hookResponseForm();
 
       if (moodleContext.settings && moodleContext.settings.enforce) {
         enforce = {
