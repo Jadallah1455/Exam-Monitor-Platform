@@ -256,7 +256,9 @@ class quizaccess_exammonitor extends \mod_quiz\local\access_rule_base {
                 'name' => $quiz->name,
                 'attempt_id' => (int) $attemptid,
                 'course_id' => (int) $course->id,
-                'cmid' => (int) $cm->id
+                'cmid' => (int) $cm->id,
+                'duration_minutes' => !empty($quiz->timelimit) ? (int)round($quiz->timelimit / 60) : 0,
+                'timelimit_seconds' => !empty($quiz->timelimit) ? (int)$quiz->timelimit : 0,
             ],
             'sesskey' => sesskey(),
             'settings' => [
